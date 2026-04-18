@@ -83,6 +83,15 @@
       flex-direction: column;
     }
 
+    /* 動画+コントロール+タイムラインを固定 */
+    .sticky-video {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      background: #f0f2f5;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+
     /* 記録タブ: 動画 + 記録ボタン */
     .video-area {
       background: #000;
@@ -1354,7 +1363,7 @@
             <div className="main-area">
               <input type="file" accept="video/*" onChange={handleFileSelect} className="file-input" ref={fileInputRef} />
               {videoSrc ? (
-                <>
+                <div className="sticky-video">
                   <div className="video-area" onClick={togglePlay}>
                     <video ref={videoRef} src={videoSrc} playsInline webkit-playsinline="true" />
                     <div className="timecode-badge">{formatTime(currentTime)} / {formatTime(duration)}</div>
@@ -1396,7 +1405,7 @@
                       </div>
                     </div>
                   )}
-                </>
+                </div>
               ) : (
                 <div className="video-area">
                   <div className="video-placeholder">
