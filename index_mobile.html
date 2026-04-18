@@ -373,14 +373,15 @@
 
     /* タイムライン */
     .timeline-mini {
-      margin: 0 10px 10px;
+      margin: 8px 10px 0;
       background: white;
       border-radius: 10px;
-      padding: 10px;
+      padding: 8px 10px 6px;
       box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+      flex-shrink: 0;
     }
     .tl-bar {
-      height: 22px;
+      height: 16px;
       background: #eceff1;
       border-radius: 4px;
       position: relative;
@@ -1369,6 +1370,32 @@
                       <button className="ctrl-btn" onClick={() => skip(30)}>+30</button>
                     </div>
                   </div>
+                  {duration > 0 && (
+                    <div className="timeline-mini">
+                      <div className="tl-bar" onClick={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const newTime = ((e.clientX - rect.left) / rect.width) * duration;
+                        setCurrentTime(newTime);
+                        if (videoRef.current) videoRef.current.currentTime = newTime / 1000;
+                      }}>
+                        {records.map(r => {
+                          const cat = CATEGORIES.find(c => c.id === r.category);
+                          const startPos = (r.startTime / duration) * 100;
+                          const width = (Math.max(0, (r.endTime ?? currentTime) - r.startTime) / duration) * 100;
+                          return <div key={r.id} className="tl-segment" style={{ left: `${startPos}%`, width: `${Math.max(width, 0.5)}%`, backgroundColor: cat?.color }} />;
+                        })}
+                        <div className="tl-cursor" style={{ left: `${(currentTime / duration) * 100}%` }} />
+                      </div>
+                      <div className="tl-events">
+                        {interactions.map(i => {
+                          const pos = (i.timestamp / duration) * 100;
+                          const color = i.type === 'question' ? '#f59e0b' : i.type === 'encouragement' ? '#f97316' :
+                            i.feedbackType === 'positive' ? '#22c55e' : i.feedbackType === 'corrective' ? '#eab308' : '#6b7280';
+                          return <div key={i.id} className="tl-dot" style={{ left: `${pos}%`, backgroundColor: color }} />;
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="video-area">
@@ -1469,38 +1496,6 @@
                   </div>
                 )}
               </div>
-
-              {/* タイムライン */}
-              {duration > 0 && (
-                <div className="timeline-mini">
-                  <div className="section-title" style={{marginBottom: 6}}>📊 タイムライン</div>
-                  <div className="tl-bar" onClick={(e) => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const newTime = ((e.clientX - rect.left) / rect.width) * duration;
-                    setCurrentTime(newTime);
-                    if (videoRef.current) videoRef.current.currentTime = newTime / 1000;
-                  }}>
-                    {records.map(r => {
-                      const cat = CATEGORIES.find(c => c.id === r.category);
-                      const startPos = (r.startTime / duration) * 100;
-                      const width = (Math.max(0, (r.endTime ?? currentTime) - r.startTime) / duration) * 100;
-                      return <div key={r.id} className="tl-segment" style={{ left: `${startPos}%`, width: `${Math.max(width, 0.5)}%`, backgroundColor: cat?.color }} />;
-                    })}
-                    <div className="tl-cursor" style={{ left: `${(currentTime / duration) * 100}%` }} />
-                  </div>
-                  <div className="tl-events">
-                    {interactions.map(i => {
-                      const pos = (i.timestamp / duration) * 100;
-                      const color = i.type === 'question' ? '#f59e0b' : i.type === 'encouragement' ? '#f97316' :
-                        i.feedbackType === 'positive' ? '#22c55e' : i.feedbackType === 'corrective' ? '#eab308' : '#6b7280';
-                      return <div key={i.id} className="tl-dot" style={{ left: `${pos}%`, backgroundColor: color }} />;
-                    })}
-                  </div>
-                  <div className="tl-legend">
-                    {CATEGORIES.map(c => <div key={c.id} className="tl-legend-item"><div className="tl-legend-color" style={{ backgroundColor: c.color }} /><span>{c.label}</span></div>)}
-                  </div>
-                </div>
-              )}
 
               <div style={{height: 16}}/>
             </div>
