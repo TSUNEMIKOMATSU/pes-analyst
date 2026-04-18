@@ -1,0 +1,1700 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>PES Analyst Mobile</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      overscroll-behavior: none;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Hiragino Kaku Gothic ProN', sans-serif;
+      background: #f0f2f5;
+      color: #263238;
+      font-size: 14px;
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    button {
+      font-family: inherit;
+      touch-action: manipulation;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    input[type="range"] { touch-action: manipulation; }
+
+    /* アプリ全体 */
+    .app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      height: 100dvh;
+    }
+
+    /* ヘッダー */
+    .m-header {
+      background: linear-gradient(135deg, #1a237e 0%, #283593 100%);
+      color: white;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    .m-header h1 { font-size: 1rem; font-weight: 700; }
+    .m-header .subtitle { opacity: 0.75; font-size: 0.68rem; margin-left: 2px; }
+    .m-header .save-status {
+      margin-left: auto;
+      font-size: 0.68rem;
+      opacity: 0.9;
+      white-space: nowrap;
+    }
+    .menu-btn {
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      color: white;
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      font-size: 1.1rem;
+      cursor: pointer;
+      margin-left: 6px;
+    }
+    .menu-btn:active { background: rgba(255,255,255,0.3); }
+
+    /* メインエリア (タブで切替) */
+    .main-area {
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* 記録タブ: 動画 + 記録ボタン */
+    .video-area {
+      background: #000;
+      position: relative;
+      aspect-ratio: 16 / 9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .video-area video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    .timecode-badge {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      background: rgba(0,0,0,0.7);
+      color: white;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 0.75rem;
+      pointer-events: none;
+    }
+    .video-placeholder {
+      color: white;
+      text-align: center;
+      padding: 16px;
+    }
+    .video-placeholder .ph-icon { font-size: 3rem; opacity: 0.6; margin-bottom: 10px; }
+    .video-placeholder p { font-size: 0.85rem; opacity: 0.85; margin-bottom: 10px; line-height: 1.5; }
+    .open-video-btn {
+      display: inline-block;
+      background: #2196f3;
+      color: white;
+      border: none;
+      padding: 10px 22px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 6px;
+    }
+    .open-video-btn:active { background: #1976d2; }
+    .secondary-btn {
+      display: inline-block;
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.4);
+      color: white;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      margin-top: 8px;
+      margin-left: 4px;
+    }
+    .secondary-btn:active { background: rgba(255,255,255,0.15); }
+
+    /* 動画コントロール */
+    .video-controls {
+      background: linear-gradient(180deg, #37474f 0%, #263238 100%);
+      padding: 8px 12px 6px;
+      flex-shrink: 0;
+    }
+    .seek-bar {
+      width: 100%;
+      height: 22px;
+      -webkit-appearance: none;
+      background: transparent;
+      cursor: pointer;
+      margin: 0;
+    }
+    .seek-bar::-webkit-slider-runnable-track {
+      height: 6px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 3px;
+    }
+    .seek-bar::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 18px;
+      height: 18px;
+      background: #2196f3;
+      border-radius: 50%;
+      cursor: pointer;
+      margin-top: -6px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+    .control-row {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 6px;
+      margin-top: 2px;
+    }
+    .ctrl-btn {
+      background: rgba(255,255,255,0.12);
+      border: none;
+      color: white;
+      font-size: 0.85rem;
+      cursor: pointer;
+      padding: 7px 10px;
+      border-radius: 7px;
+      min-width: 42px;
+    }
+    .ctrl-btn:active { background: rgba(255,255,255,0.25); }
+    .ctrl-btn.play {
+      background: #2196f3;
+      font-size: 1.1rem;
+      padding: 8px 16px;
+    }
+    .ctrl-btn.play:active { background: #1976d2; }
+    .ctrl-label {
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 0.75rem;
+      color: rgba(255,255,255,0.9);
+      margin-left: auto;
+      margin-right: 2px;
+    }
+
+    /* 期間記録 */
+    .section {
+      padding: 10px 10px 4px;
+    }
+    .section-title {
+      font-size: 0.68rem;
+      color: #78909c;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .period-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .period-btn {
+      min-height: 68px;
+      border: 2.5px solid;
+      border-radius: 10px;
+      background: white;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 6px;
+      font-family: inherit;
+      transition: transform 0.1s, box-shadow 0.15s;
+    }
+    .period-btn:active { transform: scale(0.97); }
+    .period-btn.active {
+      color: white !important;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.18);
+    }
+    .period-btn .pb-label { font-size: 0.85rem; font-weight: 700; }
+    .period-btn .pb-time { font-family: 'SF Mono', Monaco, monospace; font-size: 0.8rem; margin-top: 3px; }
+
+    /* 相互作用タブ */
+    .ia-container {
+      background: white;
+      margin: 4px 10px 10px;
+      border-radius: 10px;
+      padding: 8px 8px 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    }
+    .ia-tabs {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      margin-bottom: 8px;
+      padding-bottom: 2px;
+    }
+    .ia-tabs::-webkit-scrollbar { display: none; }
+    .ia-tab {
+      flex: 1;
+      min-width: 0;
+      padding: 7px 4px;
+      background: #eceff1;
+      border: none;
+      border-radius: 20px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: #546e7a;
+      cursor: pointer;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+    }
+    .ia-tab .count-badge {
+      background: rgba(0,0,0,0.08);
+      padding: 1px 5px;
+      border-radius: 10px;
+      font-size: 0.62rem;
+      font-weight: 700;
+      min-width: 16px;
+      text-align: center;
+    }
+    .ia-tab.active {
+      color: white;
+    }
+    .ia-tab.active.question { background: #f59e0b; }
+    .ia-tab.active.encouragement { background: #f97316; }
+    .ia-tab.active.positive { background: #22c55e; }
+    .ia-tab.active.corrective { background: #eab308; color: #5d4037; }
+    .ia-tab.active.negative { background: #6b7280; }
+    .ia-tab.active .count-badge {
+      background: rgba(255,255,255,0.25);
+      color: white;
+    }
+    .ia-tab.active.corrective .count-badge { color: #5d4037; }
+
+    .ia-buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 6px;
+    }
+    .ia-buttons.feedback {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+    .ia-btn {
+      min-height: 54px;
+      border: none;
+      border-radius: 10px;
+      color: white;
+      cursor: pointer;
+      font-size: 0.82rem;
+      font-weight: 700;
+      padding: 6px 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+    }
+    .ia-btn:active { transform: scale(0.96); opacity: 0.85; }
+    .ia-btn .ia-btn-icon { font-size: 1rem; }
+    .ia-btn .ia-btn-sub { font-size: 0.65rem; font-weight: 600; opacity: 0.9; }
+
+    .ia-btn.question { background: #f59e0b; }
+    .ia-btn.encouragement { background: #f97316; }
+    .ia-btn.positive { background: #4caf50; }
+    .ia-btn.positive.specific { background: #2e7d32; }
+    .ia-btn.corrective { background: #ffc107; color: #5d4037; }
+    .ia-btn.corrective.specific { background: #ff8f00; color: white; }
+    .ia-btn.negative { background: #78909c; }
+    .ia-btn.negative.specific { background: #455a64; }
+
+    /* FB用コンパクトグリッド */
+    .fb-grid {
+      display: grid;
+      grid-template-columns: 72px 1fr 1fr;
+      gap: 5px;
+      align-items: stretch;
+    }
+    .fb-grid-header {
+      text-align: center;
+      font-size: 0.68rem;
+      font-weight: 700;
+      color: #546e7a;
+      padding: 4px 0 0;
+    }
+    .fb-scope-cell {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #455a64;
+      background: #f5f7f8;
+      border-radius: 8px;
+      padding: 4px 2px;
+    }
+    .fb-grid .ia-btn {
+      min-height: 44px;
+      font-size: 0.78rem;
+    }
+
+    /* タイムライン */
+    .timeline-mini {
+      margin: 0 10px 10px;
+      background: white;
+      border-radius: 10px;
+      padding: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    }
+    .tl-bar {
+      height: 22px;
+      background: #eceff1;
+      border-radius: 4px;
+      position: relative;
+      overflow: hidden;
+      cursor: pointer;
+    }
+    .tl-segment { position: absolute; height: 100%; }
+    .tl-cursor {
+      position: absolute;
+      width: 2px;
+      height: 100%;
+      background: #1565c0;
+      z-index: 10;
+    }
+    .tl-events {
+      position: relative;
+      height: 10px;
+      margin-top: 3px;
+    }
+    .tl-dot {
+      position: absolute;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      border: 1px solid white;
+      transform: translate(-50%, -50%);
+      top: 50%;
+    }
+    .tl-legend {
+      display: flex;
+      gap: 8px;
+      margin-top: 6px;
+      flex-wrap: wrap;
+    }
+    .tl-legend-item {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 0.65rem;
+      color: #78909c;
+    }
+    .tl-legend-color { width: 8px; height: 8px; border-radius: 2px; }
+
+    /* 下部タブバー */
+    .tab-bar {
+      display: flex;
+      background: white;
+      border-top: 1px solid #eceff1;
+      flex-shrink: 0;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    .tab-btn {
+      flex: 1;
+      background: none;
+      border: none;
+      padding: 8px 4px 6px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      cursor: pointer;
+      color: #90a4ae;
+      font-size: 0.65rem;
+      font-weight: 600;
+    }
+    .tab-btn.active { color: #1976d2; }
+    .tab-btn .tb-icon { font-size: 1.3rem; }
+
+    /* 集計タブ */
+    .stats-page {
+      padding: 12px;
+    }
+    .aggregate-btn {
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, #4caf50 0%, #388e3c 100%);
+      border: none;
+      border-radius: 10px;
+      color: white;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      margin-bottom: 14px;
+      box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
+    }
+    .aggregate-btn:active { transform: scale(0.98); }
+    .stats-card {
+      background: white;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    }
+    .stats-card-title {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: #455a64;
+      margin-bottom: 10px;
+    }
+    .chart-wrap { height: 200px; margin-bottom: 12px; }
+    .stats-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+    }
+    .stats-table th {
+      background: #eceff1;
+      padding: 7px 4px;
+      text-align: left;
+      font-weight: 600;
+      color: #455a64;
+      font-size: 0.72rem;
+    }
+    .stats-table td {
+      padding: 7px 4px;
+      border-bottom: 1px solid #f5f5f5;
+    }
+    .stats-table .num { text-align: right; font-family: 'SF Mono', Monaco, monospace; }
+    .stats-table .color-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+      vertical-align: middle;
+    }
+    .no-data {
+      text-align: center;
+      color: #90a4ae;
+      padding: 36px 20px;
+      font-size: 0.85rem;
+      line-height: 1.6;
+    }
+
+    /* 一覧タブ */
+    .list-page {
+      padding: 12px;
+    }
+    .list-card {
+      background: white;
+      border-radius: 10px;
+      padding: 10px 4px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    }
+    .list-item {
+      display: flex;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid #f0f0f0;
+      cursor: pointer;
+      gap: 10px;
+    }
+    .list-item:last-child { border-bottom: none; }
+    .list-item:active { background: #e3f2fd; }
+    .list-time {
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 0.75rem;
+      color: #1976d2;
+      font-weight: 600;
+      min-width: 50px;
+    }
+    .list-badge {
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      color: white;
+      white-space: nowrap;
+    }
+    .list-badge.question { background: #f59e0b; }
+    .list-badge.encouragement { background: #f97316; }
+    .list-badge.positive { background: #4caf50; }
+    .list-badge.corrective { background: #ffb300; color: #5d4037; }
+    .list-badge.negative { background: #78909c; }
+    .list-scope {
+      font-size: 0.7rem;
+      color: #78909c;
+    }
+    .list-comment {
+      flex: 1;
+      font-size: 0.78rem;
+      color: #455a64;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .list-comment.empty { color: #bbb; }
+
+    /* モーダル */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.5);
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      z-index: 1000;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    .modal {
+      background: white;
+      border-radius: 16px 16px 0 0;
+      padding: 18px 18px 22px;
+      width: 100%;
+      max-width: 600px;
+      box-shadow: 0 -4px 16px rgba(0,0,0,0.2);
+      max-height: 85vh;
+      overflow-y: auto;
+    }
+    .modal-handle {
+      width: 40px;
+      height: 4px;
+      background: #cfd8dc;
+      border-radius: 2px;
+      margin: -8px auto 14px;
+    }
+    .modal-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .modal-header h3 { font-size: 1rem; color: #333; margin: 0; }
+    .modal-badge {
+      padding: 3px 10px;
+      border-radius: 10px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: white;
+    }
+    .modal-badge.positive { background: #4caf50; }
+    .modal-badge.corrective { background: #ff9800; }
+    .modal-badge.negative { background: #607d8b; }
+    .modal-badge.question { background: #f59e0b; }
+    .modal-badge.encouragement { background: #f97316; }
+    .modal-badge.scope { background: #607d8b; }
+    .modal-time { font-size: 0.78rem; color: #666; margin-bottom: 10px; }
+    .modal-input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      resize: vertical;
+      min-height: 80px;
+      font-family: inherit;
+    }
+    .modal-input:focus { outline: none; border-color: #2196f3; }
+    .modal-buttons {
+      display: flex;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .modal-btn {
+      flex: 1;
+      padding: 11px 8px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .modal-btn.cancel { background: #f5f5f5; color: #666; }
+    .modal-btn.cancel:active { background: #e0e0e0; }
+    .modal-btn.delete { background: #ffebee; color: #c62828; }
+    .modal-btn.delete:active { background: #ffcdd2; }
+    .modal-btn.confirm { background: #2196f3; color: white; }
+    .modal-btn.confirm:active { background: #1976d2; }
+
+    /* メニュードロワー */
+    .drawer-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 900;
+    }
+    .drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 80%;
+      max-width: 320px;
+      background: white;
+      z-index: 901;
+      display: flex;
+      flex-direction: column;
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+      animation: slideIn 0.2s ease-out;
+    }
+    @keyframes slideIn {
+      from { transform: translateX(100%); }
+      to { transform: translateX(0); }
+    }
+    .drawer-header {
+      padding: 16px;
+      background: linear-gradient(135deg, #1a237e 0%, #283593 100%);
+      color: white;
+    }
+    .drawer-header h2 { font-size: 1rem; margin-bottom: 4px; }
+    .drawer-header .video-info { font-size: 0.7rem; opacity: 0.85; word-break: break-all; }
+    .drawer-section {
+      padding: 14px 16px;
+      border-bottom: 1px solid #eceff1;
+    }
+    .drawer-section-title {
+      font-size: 0.68rem;
+      color: #78909c;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    .drawer-btn {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 12px 10px;
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      color: #263238;
+      cursor: pointer;
+      text-align: left;
+      margin-bottom: 6px;
+    }
+    .drawer-btn:active { background: #f5f5f5; }
+    .drawer-btn .db-icon { font-size: 1.1rem; }
+    .drawer-btn.primary { background: #1976d2; color: white; border-color: #1976d2; }
+    .drawer-btn.danger { background: #ffebee; color: #c62828; border-color: #ffcdd2; }
+    .drawer-close {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      background: rgba(255,255,255,0.2);
+      border: none;
+      color: white;
+      width: 32px;
+      height: 32px;
+      border-radius: 16px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+
+    /* ローディング */
+    .loading-screen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(135deg, #1a237e 0%, #283593 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      z-index: 9999;
+    }
+    .loading-screen h1 { font-size: 1.6rem; margin-bottom: 10px; }
+    .loading-screen p { opacity: 0.8; font-size: 0.85rem; }
+    .loading-spinner {
+      width: 34px;
+      height: 34px;
+      border: 3px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-top: 18px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .file-input { display: none; }
+
+    /* 横向き対応 */
+    @media (orientation: landscape) and (max-height: 500px) {
+      .video-area { aspect-ratio: auto; height: 60vh; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+
+    const CATEGORIES = [
+      { id: 'instruction', label: '学習指導', color: '#ef4444' },
+      { id: 'management', label: 'マネジメント', color: '#3b82f6' },
+      { id: 'cognitive', label: '認知学習', color: '#eab308' },
+      { id: 'motor', label: '運動学習', color: '#ec4899' }
+    ];
+
+    const formatTime = (ms) => {
+      const totalSeconds = Math.floor(ms / 1000);
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    };
+    const formatTimeDetail = (ms) => {
+      const totalSeconds = Math.floor(ms / 1000);
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      return `${minutes}分${seconds}秒`;
+    };
+    const scopeLabel = (s) => s === 'all' ? '全体' : s === 'group' ? 'グループ' : '個人';
+
+    // ------ IndexedDB (PC版と互換) ------
+    const DB_NAME = 'PESAnalystDB';
+    const DB_VERSION = 1;
+    const STORE_NAME = 'sessions';
+
+    const openDB = () => new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve(req.result);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+        }
+      };
+    });
+    const saveToIndexedDB = async (videoBlob, videoName, records, interactions, currentTime, duration, videoMode) => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.put({
+          id: 'current_session',
+          videoBlob, videoName, records, interactions,
+          currentTime, duration, videoMode,
+          savedAt: new Date().toISOString()
+        });
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    };
+    const loadFromIndexedDB = async () => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const req = tx.objectStore(STORE_NAME).get('current_session');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    };
+    const clearIndexedDB = async () => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const req = tx.objectStore(STORE_NAME).delete('current_session');
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    };
+
+    // ------ 相互作用タブ定義 ------
+    const IA_TABS = [
+      { id: 'question', label: '🎤発問', type: 'question' },
+      { id: 'encouragement', label: '👍励まし', type: 'encouragement' },
+      { id: 'positive', label: '😊肯定', type: 'feedback', fb: 'positive' },
+      { id: 'corrective', label: '🔧矯正', type: 'feedback', fb: 'corrective' },
+      { id: 'negative', label: '😐否定', type: 'feedback', fb: 'negative' }
+    ];
+
+    function App() {
+      const videoRef = useRef(null);
+      const pieChartRef = useRef(null);
+      const barChartRef = useRef(null);
+      const pieChartInstance = useRef(null);
+      const barChartInstance = useRef(null);
+      const fileInputRef = useRef(null);
+      const loadInputRef = useRef(null);
+      const autoSaveTimeout = useRef(null);
+      const commentInputRef = useRef(null);
+
+      const [videoSrc, setVideoSrc] = useState(null);
+      const [videoBlob, setVideoBlob] = useState(null);
+      const [videoName, setVideoName] = useState('');
+      const [isPlaying, setIsPlaying] = useState(false);
+      const [currentTime, setCurrentTime] = useState(0);
+      const [duration, setDuration] = useState(0);
+      const [activeCategory, setActiveCategory] = useState(null);
+      const [records, setRecords] = useState([]);
+      const [interactions, setInteractions] = useState([]);
+      const [aggregatedData, setAggregatedData] = useState(null);
+      const [isLoaded, setIsLoaded] = useState(false);
+      const [saveStatus, setSaveStatus] = useState('');
+      const [hasSavedSession, setHasSavedSession] = useState(false);
+      const [showCommentModal, setShowCommentModal] = useState(false);
+      const [editingInteraction, setEditingInteraction] = useState(null);
+      const [commentText, setCommentText] = useState('');
+      const [videoMode, setVideoMode] = useState('direct');  // モバイルは軽量モード固定
+      const [needsVideoReselect, setNeedsVideoReselect] = useState(false);
+      const [activeTab, setActiveTab] = useState('record');  // record | stats | list
+      const [iaTab, setIaTab] = useState('question');
+      const [menuOpen, setMenuOpen] = useState(false);
+
+      // ------ ファイル選択 ------
+      const handleFileSelect = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        setIsPlaying(false);
+        if (videoSrc) URL.revokeObjectURL(videoSrc);
+        if (needsVideoReselect) {
+          setVideoSrc(URL.createObjectURL(file));
+          setVideoName(file.name);
+          setNeedsVideoReselect(false);
+        } else {
+          setVideoSrc(URL.createObjectURL(file));
+          setVideoBlob(null);
+          setVideoName(file.name);
+          setRecords([]);
+          setInteractions([]);
+          setActiveCategory(null);
+          setCurrentTime(0);
+          setAggregatedData(null);
+        }
+        e.target.value = '';
+      };
+
+      const openVideoPicker = () => {
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+          fileInputRef.current.click();
+        }
+      };
+
+      // ------ 自動保存 ------
+      const autoSave = async () => {
+        if (!videoSrc && !needsVideoReselect && records.length === 0 && interactions.length === 0) return;
+        try {
+          setSaveStatus('保存中…');
+          await saveToIndexedDB(null, videoName, records, interactions, currentTime, duration, 'direct');
+          setSaveStatus('✓ 自動保存');
+          setHasSavedSession(true);
+          setTimeout(() => setSaveStatus(''), 1800);
+        } catch (err) {
+          console.error('Save error:', err);
+          setSaveStatus('保存エラー');
+        }
+      };
+
+      const loadSavedSession = async () => {
+        try {
+          const saved = await loadFromIndexedDB();
+          if (!saved) return false;
+          const hasData = (saved.records && saved.records.length > 0) || (saved.interactions && saved.interactions.length > 0);
+          const hasVideo = !!saved.videoBlob;
+          if (!hasData && !hasVideo) return false;
+
+          if (hasVideo) {
+            setVideoBlob(saved.videoBlob);
+            setVideoSrc(URL.createObjectURL(saved.videoBlob));
+            setVideoMode('memory');
+          } else {
+            setVideoMode('direct');
+            setNeedsVideoReselect(true);
+          }
+          setVideoName(saved.videoName || '');
+          setRecords(saved.records || []);
+          setInteractions(saved.interactions || []);
+          setDuration(saved.duration || 0);
+          setCurrentTime(saved.currentTime || 0);
+          setTimeout(() => {
+            if (videoRef.current && saved.currentTime) {
+              videoRef.current.currentTime = saved.currentTime / 1000;
+            }
+          }, 500);
+          setHasSavedSession(true);
+          return true;
+        } catch (err) {
+          console.error('Load error:', err);
+          return false;
+        }
+      };
+
+      const startNewSession = async () => {
+        if (!confirm('保存データを削除して新しく始めますか?')) return;
+        await clearIndexedDB();
+        if (videoSrc) URL.revokeObjectURL(videoSrc);
+        setVideoSrc(null);
+        setVideoBlob(null);
+        setVideoName('');
+        setIsPlaying(false);
+        setRecords([]);
+        setInteractions([]);
+        setCurrentTime(0);
+        setDuration(0);
+        setActiveCategory(null);
+        setAggregatedData(null);
+        setHasSavedSession(false);
+        setVideoMode('direct');
+        setNeedsVideoReselect(false);
+        setMenuOpen(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      };
+
+      useEffect(() => {
+        (async () => {
+          await loadSavedSession();
+          setIsLoaded(true);
+        })();
+      }, []);
+
+      useEffect(() => {
+        if (!isLoaded) return;
+        if (autoSaveTimeout.current) clearTimeout(autoSaveTimeout.current);
+        autoSaveTimeout.current = setTimeout(autoSave, 2000);
+        return () => autoSaveTimeout.current && clearTimeout(autoSaveTimeout.current);
+      }, [records, interactions, currentTime]);
+
+      // ------ 動画再生 ------
+      const togglePlay = () => {
+        if (!videoRef.current) return;
+        if (isPlaying) videoRef.current.pause();
+        else videoRef.current.play().catch(e => console.log('Play error:', e));
+        setIsPlaying(!isPlaying);
+      };
+      const skip = (seconds) => {
+        if (!videoRef.current) return;
+        videoRef.current.currentTime = Math.max(0, Math.min(videoRef.current.currentTime + seconds, duration / 1000));
+      };
+
+      useEffect(() => {
+        const video = videoRef.current;
+        if (!video) return;
+        const onTimeUpdate = () => setCurrentTime(video.currentTime * 1000);
+        const onLoadedMetadata = () => setDuration(video.duration * 1000);
+        const onPlay = () => setIsPlaying(true);
+        const onPause = () => setIsPlaying(false);
+        const onEnded = () => setIsPlaying(false);
+        video.addEventListener('timeupdate', onTimeUpdate);
+        video.addEventListener('loadedmetadata', onLoadedMetadata);
+        video.addEventListener('play', onPlay);
+        video.addEventListener('pause', onPause);
+        video.addEventListener('ended', onEnded);
+        return () => {
+          video.removeEventListener('timeupdate', onTimeUpdate);
+          video.removeEventListener('loadedmetadata', onLoadedMetadata);
+          video.removeEventListener('play', onPlay);
+          video.removeEventListener('pause', onPause);
+          video.removeEventListener('ended', onEnded);
+        };
+      }, [videoSrc]);
+
+      // ------ 期間記録 ------
+      const toggleCategory = (categoryId) => {
+        const now = currentTime;
+        if (activeCategory === categoryId) {
+          setRecords(prev => prev.map(r => r.endTime === null ? { ...r, endTime: now, duration: Math.max(0, now - r.startTime) } : r));
+          setActiveCategory(null);
+        } else {
+          setRecords(prev => {
+            const closed = prev.map(r => r.endTime === null ? { ...r, endTime: now, duration: Math.max(0, now - r.startTime) } : r);
+            return [...closed, { id: Date.now(), category: categoryId, startTime: now, endTime: null, duration: 0 }];
+          });
+          setActiveCategory(categoryId);
+        }
+      };
+
+      useEffect(() => {
+        if (activeCategory) {
+          setRecords(prev => prev.map(r => r.endTime === null ? { ...r, duration: Math.max(0, currentTime - r.startTime) } : r));
+        }
+      }, [currentTime, activeCategory]);
+
+      const getRecordDuration = (r) => {
+        const end = r.endTime !== null ? r.endTime : currentTime;
+        return Math.max(0, end - r.startTime);
+      };
+      const getCategoryStats = (categoryId) => {
+        const catRecords = records.filter(r => r.category === categoryId);
+        const totalTime = catRecords.reduce((sum, r) => sum + getRecordDuration(r), 0);
+        const totalAllTime = CATEGORIES.reduce((sum, cat) => sum + records.filter(r => r.category === cat.id).reduce((s, r) => s + getRecordDuration(r), 0), 0);
+        return { totalTime, count: catRecords.length, percentage: totalAllTime > 0 ? (totalTime / totalAllTime * 100) : 0 };
+      };
+
+      // ------ 相互作用 ------
+      const addInteraction = (type, targetScope, feedbackType = null, isSpecific = false) => {
+        setInteractions(prev => [...prev, {
+          id: Date.now(),
+          type, targetScope, feedbackType, isSpecific,
+          timestamp: currentTime,
+          comment: ''
+        }]);
+      };
+
+      const editInteraction = (interaction) => {
+        setEditingInteraction(interaction);
+        setCommentText(interaction.comment || '');
+        setShowCommentModal(true);
+        setTimeout(() => commentInputRef.current?.focus(), 100);
+      };
+      const confirmInteraction = () => {
+        if (editingInteraction) {
+          setInteractions(prev => prev.map(i =>
+            i.id === editingInteraction.id ? { ...i, comment: commentText.trim() } : i
+          ));
+          setShowCommentModal(false);
+          setEditingInteraction(null);
+          setCommentText('');
+        }
+      };
+      const cancelInteraction = () => {
+        setShowCommentModal(false);
+        setEditingInteraction(null);
+        setCommentText('');
+      };
+      const deleteInteraction = (id) => {
+        if (!confirm('この記録を削除しますか?')) return;
+        setInteractions(prev => prev.filter(i => i.id !== id));
+        setShowCommentModal(false);
+        setEditingInteraction(null);
+      };
+
+      const getInteractionCount = (type, targetScope = null, feedbackType = null) => {
+        return interactions.filter(i => {
+          if (i.type !== type) return false;
+          if (targetScope && i.targetScope !== targetScope) return false;
+          if (feedbackType && i.feedbackType !== feedbackType) return false;
+          return true;
+        }).length;
+      };
+
+      // ------ 集計 ------
+      const aggregateData = () => {
+        const categoryData = CATEGORIES.map(cat => {
+          const catRecords = records.filter(r => r.category === cat.id);
+          const totalTime = catRecords.reduce((sum, r) => sum + getRecordDuration(r), 0);
+          const totalAllTime = CATEGORIES.reduce((sum, c) => sum + records.filter(r => r.category === c.id).reduce((s, r) => s + getRecordDuration(r), 0), 0);
+          return { id: cat.id, totalTime, count: catRecords.length, percentage: totalAllTime > 0 ? (totalTime / totalAllTime * 100) : 0 };
+        });
+        const interactionData = {
+          question: { all: 0, group: 0, individual: 0, total: 0, entries: [] },
+          encouragement: { all: 0, group: 0, individual: 0, total: 0, entries: [] },
+          positive: { all: 0, group: 0, individual: 0, total: 0, entries: [] },
+          corrective: { all: 0, group: 0, individual: 0, total: 0, entries: [] },
+          negative: { all: 0, group: 0, individual: 0, total: 0, entries: [] }
+        };
+        interactions.forEach(i => {
+          const entry = { timestamp: i.timestamp, comment: i.comment || '', targetScope: i.targetScope };
+          if (i.type === 'question' || i.type === 'encouragement') {
+            interactionData[i.type][i.targetScope]++;
+            interactionData[i.type].total++;
+            interactionData[i.type].entries.push(entry);
+          } else if (i.type === 'feedback' && i.feedbackType) {
+            interactionData[i.feedbackType][i.targetScope]++;
+            interactionData[i.feedbackType].total++;
+            interactionData[i.feedbackType].entries.push(entry);
+          }
+        });
+        ['question', 'encouragement', 'positive', 'corrective', 'negative'].forEach(k =>
+          interactionData[k].entries.sort((a, b) => a.timestamp - b.timestamp)
+        );
+        setAggregatedData({ categoryData, interactionData, totalDuration: duration, timestamp: Date.now() });
+      };
+
+      useEffect(() => {
+        if (!aggregatedData || activeTab !== 'stats') return;
+        if (pieChartRef.current) {
+          if (pieChartInstance.current) pieChartInstance.current.destroy();
+          const data = aggregatedData.categoryData.map(c => c.totalTime / 1000);
+          const hasData = data.some(d => d > 0);
+          pieChartInstance.current = new Chart(pieChartRef.current.getContext('2d'), {
+            type: 'doughnut',
+            data: {
+              labels: CATEGORIES.map(c => c.label),
+              datasets: [{ data: hasData ? data : [1], backgroundColor: hasData ? CATEGORIES.map(c => c.color) : ['#e0e0e0'], borderWidth: 2, borderColor: '#fff' }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } }
+          });
+        }
+        if (barChartRef.current) {
+          if (barChartInstance.current) barChartInstance.current.destroy();
+          const iData = aggregatedData.interactionData;
+          barChartInstance.current = new Chart(barChartRef.current.getContext('2d'), {
+            type: 'bar',
+            data: {
+              labels: ['発問', '励まし', '肯定FB', '矯正FB', '否定FB'],
+              datasets: [{
+                data: [iData.question.total, iData.encouragement.total, iData.positive.total, iData.corrective.total, iData.negative.total],
+                backgroundColor: ['#f59e0b', '#f97316', '#22c55e', '#eab308', '#6b7280']
+              }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
+          });
+        }
+      }, [aggregatedData, activeTab]);
+
+      // ------ JSON/Excel出力 ------
+      const saveSession = async () => {
+        const session = { videoName, duration, records, interactions, savedAt: new Date().toISOString() };
+        const blob = new Blob([JSON.stringify(session, null, 2)], { type: 'application/json' });
+        const defaultName = `pes-session-${new Date().toISOString().slice(0,10)}.json`;
+        if (window.showSaveFilePicker) {
+          try {
+            const handle = await window.showSaveFilePicker({
+              suggestedName: defaultName,
+              types: [{ description: '分析記録ファイル', accept: { 'application/json': ['.json'] } }]
+            });
+            const writable = await handle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+            setSaveStatus('✓ ファイル保存');
+            setTimeout(() => setSaveStatus(''), 1800);
+            return;
+          } catch (err) {
+            if (err.name === 'AbortError') return;
+          }
+        }
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = defaultName;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      };
+
+      const loadSession = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const session = JSON.parse(event.target.result);
+            setRecords(session.records || []);
+            setInteractions(session.interactions || []);
+            setVideoName(session.videoName || '');
+            if (session.duration) setDuration(session.duration);
+            setVideoSrc(null);
+            setVideoBlob(null);
+            setNeedsVideoReselect(true);
+            setVideoMode('direct');
+            setMenuOpen(false);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+            alert('記録データを復元しました。同じ動画ファイルを選択してください。');
+          } catch (err) { alert('読み込みに失敗しました。'); }
+        };
+        reader.readAsText(file);
+        e.target.value = '';
+      };
+
+      const exportToExcel = async () => {
+        const wb = XLSX.utils.book_new();
+        const periodData = CATEGORIES.map(cat => {
+          const stats = getCategoryStats(cat.id);
+          return { 'カテゴリ': cat.label, '時間': formatTimeDetail(stats.totalTime), '時間(秒)': Math.round(stats.totalTime / 1000), '割合(%)': Math.round(stats.percentage * 10) / 10, '回数': stats.count };
+        });
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(periodData), '期間記録');
+
+        const interactionDetail = interactions.map(i => {
+          let typeName = '';
+          if (i.type === 'question') typeName = '発問';
+          else if (i.type === 'encouragement') typeName = '励まし';
+          else if (i.type === 'feedback') {
+            if (i.feedbackType === 'positive') typeName = '肯定的FB';
+            else if (i.feedbackType === 'corrective') typeName = '矯正的FB';
+            else if (i.feedbackType === 'negative') typeName = '否定的FB';
+          }
+          return {
+            '時間': formatTime(i.timestamp),
+            '時間(秒)': Math.round(i.timestamp / 1000),
+            '種類': typeName,
+            '対象': scopeLabel(i.targetScope),
+            '具体性': i.type === 'feedback' ? (i.isSpecific ? '具体的' : '一般的') : '-',
+            '内容': i.comment || ''
+          };
+        }).sort((a, b) => a['時間(秒)'] - b['時間(秒)']);
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(interactionDetail), '相互作用詳細');
+
+        const interactionSummary = [];
+        ['question', 'encouragement'].forEach(type => {
+          const typeInteractions = interactions.filter(i => i.type === type);
+          const allTimes = typeInteractions.map(i => formatTime(i.timestamp)).join(', ');
+          ['all', 'group', 'individual'].forEach(scope => {
+            interactionSummary.push({
+              '種類': type === 'question' ? '発問' : '励まし',
+              '対象': scopeLabel(scope),
+              '回数': getInteractionCount(type, scope),
+              '記録時間': allTimes || '-'
+            });
+          });
+        });
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(interactionSummary), '相互作用集計');
+
+        const feedbackSummary = [];
+        ['positive', 'corrective', 'negative'].forEach(fbType => {
+          const fbInteractions = interactions.filter(i => i.type === 'feedback' && i.feedbackType === fbType);
+          const allTimes = fbInteractions.map(i => formatTime(i.timestamp)).join(', ');
+          ['all', 'group', 'individual'].forEach(scope => {
+            [false, true].forEach(isSpecific => {
+              feedbackSummary.push({
+                'FB種類': fbType === 'positive' ? '肯定的' : fbType === 'corrective' ? '矯正的' : '否定的',
+                '対象': scopeLabel(scope),
+                '具体性': isSpecific ? '具体的' : '一般的',
+                '回数': interactions.filter(i => i.type === 'feedback' && i.feedbackType === fbType && i.targetScope === scope && i.isSpecific === isSpecific).length,
+                '記録時間': allTimes || '-'
+              });
+            });
+          });
+        });
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(feedbackSummary), 'フィードバック集計');
+
+        const detailData = records.map(r => {
+          const cat = CATEGORIES.find(c => c.id === r.category);
+          return { 'カテゴリ': cat?.label, '開始': formatTime(r.startTime), '終了': r.endTime ? formatTime(r.endTime) : '記録中', '時間': formatTimeDetail(getRecordDuration(r)) };
+        });
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detailData), '詳細');
+
+        const defaultName = `pes-analysis-${new Date().toISOString().slice(0,10)}.xlsx`;
+        if (window.showSaveFilePicker) {
+          try {
+            const handle = await window.showSaveFilePicker({
+              suggestedName: defaultName,
+              types: [{ description: 'Excelファイル', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }]
+            });
+            const writable = await handle.createWritable();
+            const xlBlob = new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            await writable.write(xlBlob);
+            await writable.close();
+            setSaveStatus('✓ Excel保存');
+            setTimeout(() => setSaveStatus(''), 1800);
+            return;
+          } catch (err) {
+            if (err.name === 'AbortError') return;
+          }
+        }
+        XLSX.writeFile(wb, defaultName);
+      };
+
+      if (!isLoaded) {
+        return (
+          <div className="loading-screen">
+            <h1>🏃 PES Analyst</h1>
+            <p>読み込み中…</p>
+            <div className="loading-spinner"></div>
+          </div>
+        );
+      }
+
+      const activeIaTab = IA_TABS.find(t => t.id === iaTab);
+      const iaTabCount = (tabId) => {
+        const t = IA_TABS.find(x => x.id === tabId);
+        if (!t) return 0;
+        if (t.type === 'feedback') return getInteractionCount('feedback', null, t.fb);
+        return getInteractionCount(t.type);
+      };
+
+      return (
+        <div className="app">
+          <header className="m-header">
+            <h1>🏃 PES</h1>
+            <span className="subtitle">体育授業分析</span>
+            {saveStatus && <span className="save-status">{saveStatus}</span>}
+            <button className="menu-btn" onClick={() => setMenuOpen(true)}>☰</button>
+          </header>
+
+          {/* 記録タブ */}
+          {activeTab === 'record' && (
+            <div className="main-area">
+              <input type="file" accept="video/*" onChange={handleFileSelect} className="file-input" ref={fileInputRef} />
+              {videoSrc ? (
+                <>
+                  <div className="video-area" onClick={togglePlay}>
+                    <video ref={videoRef} src={videoSrc} playsInline webkit-playsinline="true" />
+                    <div className="timecode-badge">{formatTime(currentTime)} / {formatTime(duration)}</div>
+                  </div>
+                  <div className="video-controls">
+                    <input type="range" className="seek-bar" min="0" max={duration || 1} value={currentTime}
+                      onChange={e => { const t = parseFloat(e.target.value); setCurrentTime(t); if (videoRef.current) videoRef.current.currentTime = t / 1000; }} />
+                    <div className="control-row">
+                      <button className="ctrl-btn" onClick={() => skip(-30)}>-30</button>
+                      <button className="ctrl-btn" onClick={() => skip(-5)}>-5</button>
+                      <button className="ctrl-btn play" onClick={togglePlay}>{isPlaying ? '⏸' : '▶'}</button>
+                      <button className="ctrl-btn" onClick={() => skip(5)}>+5</button>
+                      <button className="ctrl-btn" onClick={() => skip(30)}>+30</button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="video-area">
+                  <div className="video-placeholder">
+                    {needsVideoReselect ? (
+                      <>
+                        <div className="ph-icon">🔄</div>
+                        <p>前回の記録データが残っています<br/>同じ動画を選択すると再開できます</p>
+                        {videoName && <p style={{fontSize: '0.72rem', opacity: 0.6}}>前回: {videoName}</p>}
+                        <button className="open-video-btn" onClick={openVideoPicker}>動画を再選択</button>
+                        <br/>
+                        <button className="secondary-btn" onClick={startNewSession}>新しく始める</button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="ph-icon">🎬</div>
+                        <p>授業動画を選択してください</p>
+                        <button className="open-video-btn" onClick={openVideoPicker}>動画を開く</button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 期間記録 */}
+              <div className="section">
+                <div className="section-title">⏱ 期間記録 (タップで開始/停止)</div>
+                <div className="period-grid">
+                  {CATEGORIES.map(cat => {
+                    const stats = getCategoryStats(cat.id);
+                    const isActive = activeCategory === cat.id;
+                    return (
+                      <button key={cat.id}
+                        className={`period-btn ${isActive ? 'active' : ''}`}
+                        style={{
+                          borderColor: cat.color,
+                          color: isActive ? 'white' : cat.color,
+                          backgroundColor: isActive ? cat.color : 'white'
+                        }}
+                        onClick={() => toggleCategory(cat.id)}>
+                        <span className="pb-label">{cat.label}</span>
+                        <span className="pb-time">{formatTime(stats.totalTime)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 相互作用 */}
+              <div className="section" style={{paddingBottom: 0}}>
+                <div className="section-title">💬 相互作用 (タップで記録)</div>
+              </div>
+              <div className="ia-container">
+                <div className="ia-tabs">
+                  {IA_TABS.map(tab => (
+                    <button key={tab.id}
+                      className={`ia-tab ${iaTab === tab.id ? `active ${tab.id}` : ''}`}
+                      onClick={() => setIaTab(tab.id)}>
+                      {tab.label}
+                      <span className="count-badge">{iaTabCount(tab.id)}</span>
+                    </button>
+                  ))}
+                </div>
+                {activeIaTab && activeIaTab.type !== 'feedback' && (
+                  <div className="ia-buttons">
+                    {['all', 'group', 'individual'].map(scope => (
+                      <button key={scope}
+                        className={`ia-btn ${activeIaTab.type}`}
+                        onClick={() => addInteraction(activeIaTab.type, scope)}>
+                        <span className="ia-btn-icon">{scope === 'all' ? '👥' : scope === 'group' ? '👫' : '👤'}</span>
+                        <span>{scopeLabel(scope)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {activeIaTab && activeIaTab.type === 'feedback' && (
+                  <div className="fb-grid">
+                    <div></div>
+                    <div className="fb-grid-header">一般</div>
+                    <div className="fb-grid-header">具体</div>
+                    {['all', 'group', 'individual'].map(scope => (
+                      <React.Fragment key={scope}>
+                        <div className="fb-scope-cell">
+                          {scope === 'all' ? '👥 全体' : scope === 'group' ? '👫 グループ' : '👤 個人'}
+                        </div>
+                        <button
+                          className={`ia-btn ${activeIaTab.fb}`}
+                          onClick={() => addInteraction('feedback', scope, activeIaTab.fb, false)}>
+                          一般
+                        </button>
+                        <button
+                          className={`ia-btn ${activeIaTab.fb} specific`}
+                          onClick={() => addInteraction('feedback', scope, activeIaTab.fb, true)}>
+                          具体
+                        </button>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* タイムライン */}
+              {duration > 0 && (
+                <div className="timeline-mini">
+                  <div className="section-title" style={{marginBottom: 6}}>📊 タイムライン</div>
+                  <div className="tl-bar" onClick={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const newTime = ((e.clientX - rect.left) / rect.width) * duration;
+                    setCurrentTime(newTime);
+                    if (videoRef.current) videoRef.current.currentTime = newTime / 1000;
+                  }}>
+                    {records.map(r => {
+                      const cat = CATEGORIES.find(c => c.id === r.category);
+                      const startPos = (r.startTime / duration) * 100;
+                      const width = (Math.max(0, (r.endTime ?? currentTime) - r.startTime) / duration) * 100;
+                      return <div key={r.id} className="tl-segment" style={{ left: `${startPos}%`, width: `${Math.max(width, 0.5)}%`, backgroundColor: cat?.color }} />;
+                    })}
+                    <div className="tl-cursor" style={{ left: `${(currentTime / duration) * 100}%` }} />
+                  </div>
+                  <div className="tl-events">
+                    {interactions.map(i => {
+                      const pos = (i.timestamp / duration) * 100;
+                      const color = i.type === 'question' ? '#f59e0b' : i.type === 'encouragement' ? '#f97316' :
+                        i.feedbackType === 'positive' ? '#22c55e' : i.feedbackType === 'corrective' ? '#eab308' : '#6b7280';
+                      return <div key={i.id} className="tl-dot" style={{ left: `${pos}%`, backgroundColor: color }} />;
+                    })}
+                  </div>
+                  <div className="tl-legend">
+                    {CATEGORIES.map(c => <div key={c.id} className="tl-legend-item"><div className="tl-legend-color" style={{ backgroundColor: c.color }} /><span>{c.label}</span></div>)}
+                  </div>
+                </div>
+              )}
+
+              <div style={{height: 16}}/>
+            </div>
+          )}
+
+          {/* 集計タブ */}
+          {activeTab === 'stats' && (
+            <div className="main-area">
+              <div className="stats-page">
+                <button className="aggregate-btn" onClick={aggregateData}>📊 集計を実行</button>
+                {!aggregatedData ? (
+                  <div className="stats-card">
+                    <div className="no-data">「集計を実行」を押すと<br/>統計が表示されます</div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="stats-card">
+                      <div className="stats-card-title">🕐 期間記録</div>
+                      <div className="chart-wrap"><canvas ref={pieChartRef}></canvas></div>
+                      <table className="stats-table">
+                        <thead><tr><th></th><th>カテゴリ</th><th className="num">時間</th><th className="num">割合</th><th className="num">回</th></tr></thead>
+                        <tbody>
+                          {CATEGORIES.map((cat, idx) => {
+                            const s = aggregatedData.categoryData[idx];
+                            return <tr key={cat.id}>
+                              <td><span className="color-dot" style={{backgroundColor: cat.color}}></span></td>
+                              <td>{cat.label}</td>
+                              <td className="num">{formatTime(s.totalTime)}</td>
+                              <td className="num">{s.percentage.toFixed(1)}%</td>
+                              <td className="num">{s.count}</td>
+                            </tr>;
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="stats-card">
+                      <div className="stats-card-title">💬 相互作用</div>
+                      <div className="chart-wrap" style={{height: 180}}><canvas ref={barChartRef}></canvas></div>
+                      <table className="stats-table">
+                        <thead><tr><th>種類</th><th className="num">計</th><th className="num">全体</th><th className="num">G</th><th className="num">個</th></tr></thead>
+                        <tbody>
+                          {[
+                            {k: 'question', l: '🎤発問'},
+                            {k: 'encouragement', l: '👍励まし'},
+                            {k: 'positive', l: '😊肯定FB'},
+                            {k: 'corrective', l: '🔧矯正FB'},
+                            {k: 'negative', l: '😐否定FB'}
+                          ].map(row => {
+                            const d = aggregatedData.interactionData[row.k];
+                            return <tr key={row.k}>
+                              <td>{row.l}</td>
+                              <td className="num"><b>{d.total}</b></td>
+                              <td className="num">{d.all}</td>
+                              <td className="num">{d.group}</td>
+                              <td className="num">{d.individual}</td>
+                            </tr>;
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 一覧タブ */}
+          {activeTab === 'list' && (
+            <div className="main-area">
+              <div className="list-page">
+                <div className="stats-card-title" style={{padding: '0 4px 10px'}}>📝 記録一覧 (タップで編集)</div>
+                {interactions.length === 0 ? (
+                  <div className="stats-card"><div className="no-data">記録がまだありません</div></div>
+                ) : (
+                  <div className="list-card">
+                    {[...interactions].sort((a, b) => a.timestamp - b.timestamp).map(i => {
+                      const typeClass = i.type === 'feedback' ? i.feedbackType : i.type;
+                      const typeName = i.type === 'question' ? '発問' :
+                        i.type === 'encouragement' ? '励まし' :
+                        i.feedbackType === 'positive' ? '肯定FB' :
+                        i.feedbackType === 'corrective' ? '矯正FB' : '否定FB';
+                      const specific = i.type === 'feedback' ? (i.isSpecific ? '具' : '般') : '';
+                      return (
+                        <div key={i.id} className="list-item" onClick={() => editInteraction(i)}>
+                          <span className="list-time">{formatTime(i.timestamp)}</span>
+                          <span className={`list-badge ${typeClass}`}>{typeName}{specific && `·${specific}`}</span>
+                          <span className="list-scope">{scopeLabel(i.targetScope)}</span>
+                          <span className={`list-comment ${!i.comment ? 'empty' : ''}`}>
+                            {i.comment || '✏️ 追加'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 下部タブバー */}
+          <nav className="tab-bar">
+            <button className={`tab-btn ${activeTab === 'record' ? 'active' : ''}`} onClick={() => setActiveTab('record')}>
+              <span className="tb-icon">📹</span>記録
+            </button>
+            <button className={`tab-btn ${activeTab === 'stats' ? 'active' : ''}`} onClick={() => setActiveTab('stats')}>
+              <span className="tb-icon">📊</span>集計
+            </button>
+            <button className={`tab-btn ${activeTab === 'list' ? 'active' : ''}`} onClick={() => setActiveTab('list')}>
+              <span className="tb-icon">📝</span>一覧({interactions.length})
+            </button>
+          </nav>
+
+          {/* メニュードロワー */}
+          {menuOpen && (
+            <>
+              <div className="drawer-overlay" onClick={() => setMenuOpen(false)} />
+              <div className="drawer">
+                <div className="drawer-header">
+                  <button className="drawer-close" onClick={() => setMenuOpen(false)}>✕</button>
+                  <h2>メニュー</h2>
+                  {videoName && <div className="video-info">🎬 {videoName}</div>}
+                </div>
+                <div className="drawer-section">
+                  <div className="drawer-section-title">データ</div>
+                  <input type="file" accept=".json" onChange={loadSession} style={{display:'none'}} ref={loadInputRef} />
+                  <button className="drawer-btn" onClick={() => { loadInputRef.current && loadInputRef.current.click(); }}>
+                    <span className="db-icon">📂</span>JSON記録を読み込み
+                  </button>
+                  <button className="drawer-btn" onClick={() => { saveSession(); setMenuOpen(false); }}>
+                    <span className="db-icon">💾</span>JSON記録を保存
+                  </button>
+                  <button className="drawer-btn primary" onClick={() => { exportToExcel(); setMenuOpen(false); }}>
+                    <span className="db-icon">📊</span>Excelで出力
+                  </button>
+                </div>
+                <div className="drawer-section">
+                  <div className="drawer-section-title">セッション</div>
+                  <button className="drawer-btn" onClick={() => { autoSave(); setMenuOpen(false); }}>
+                    <span className="db-icon">✅</span>今すぐ自動保存
+                  </button>
+                  {hasSavedSession && (
+                    <button className="drawer-btn danger" onClick={startNewSession}>
+                      <span className="db-icon">🆕</span>新規作成 (保存データ削除)
+                    </button>
+                  )}
+                </div>
+                <div className="drawer-section" style={{marginTop: 'auto', borderBottom: 'none'}}>
+                  <div style={{fontSize: '0.7rem', color: '#90a4ae', lineHeight: 1.5}}>
+                    動画は端末内で処理されます。<br/>
+                    PC版とJSONファイルで相互に<br/>データを受け渡せます。
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* コメント編集モーダル */}
+          {showCommentModal && editingInteraction && (
+            <div className="modal-overlay" onClick={cancelInteraction}>
+              <div className="modal" onClick={e => e.stopPropagation()}>
+                <div className="modal-handle"></div>
+                <div className="modal-header">
+                  <h3>内容を編集</h3>
+                  <span className={`modal-badge ${editingInteraction.feedbackType || editingInteraction.type}`}>
+                    {editingInteraction.type === 'question' ? '発問' :
+                     editingInteraction.type === 'encouragement' ? '励まし' :
+                     editingInteraction.feedbackType === 'positive' ? '肯定的FB' :
+                     editingInteraction.feedbackType === 'corrective' ? '矯正的FB' : '否定的FB'}
+                    {editingInteraction.type === 'feedback' && (editingInteraction.isSpecific ? ' (具体)' : ' (一般)')}
+                  </span>
+                  <span className="modal-badge scope">{scopeLabel(editingInteraction.targetScope)}</span>
+                </div>
+                <div className="modal-time">⏱ 記録時間: {formatTime(editingInteraction.timestamp)}</div>
+                <textarea
+                  ref={commentInputRef}
+                  className="modal-input"
+                  placeholder="内容を入力(例:「腕の振りが良くなった」「膝をもう少し曲げて」など)"
+                  value={commentText}
+                  onChange={e => setCommentText(e.target.value)}
+                />
+                <div className="modal-buttons">
+                  <button className="modal-btn delete" onClick={() => deleteInteraction(editingInteraction.id)}>🗑 削除</button>
+                  <button className="modal-btn cancel" onClick={cancelInteraction}>キャンセル</button>
+                  <button className="modal-btn confirm" onClick={confirmInteraction}>保存</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
