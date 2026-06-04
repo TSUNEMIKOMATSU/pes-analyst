@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PES Analyst v6 - 体育授業分析アプリ（6ボックス並列版）</title>
+  <title>PES Analyst v7 - 体育授業分析アプリ（高橋ら1991準拠・3秒ビン集計版）</title>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -83,18 +83,19 @@
     }
     .video-wrapper {
       flex: 1;
-      min-height: 300px;
+      min-height: 140px;
       display: flex;
       align-items: center;
       justify-content: center;
       background: #000;
       position: relative;
     }
-    video { max-width: 100%; max-height: 100%; }
+    video { width: 100%; height: 100%; object-fit: contain; }
     .timecode {
       position: absolute;
       top: 8px;
       right: 8px;
+      z-index: 5;
       background: rgba(0,0,0,0.75);
       color: white;
       padding: 4px 10px;
@@ -105,6 +106,7 @@
     /* ホバーオーバーレイ */
     .video-overlay {
       position: absolute;
+      z-index: 6;
       top: 0;
       left: 0;
       right: 0;
@@ -193,10 +195,15 @@
     }
     .video-controls {
       background: linear-gradient(180deg, #37474f 0%, #263238 100%);
-      padding: 8px 12px;
+      padding: 6px 12px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
     }
     .seek-bar {
-      width: 100%;
+      flex: 1;
+      width: auto;
       height: 6px;
       -webkit-appearance: none;
       background: rgba(255,255,255,0.2);
@@ -215,8 +222,9 @@
       display: flex;
       justify-content: center;
       align-items: center;
-      gap: 8px;
-      margin-top: 8px;
+      gap: 6px;
+      margin-top: 0;
+      flex-shrink: 0;
     }
     .control-btn {
       background: rgba(255,255,255,0.1);
@@ -238,15 +246,18 @@
     /* プレースホルダー */
     .placeholder {
       flex: 1;
-      min-height: 300px;
+      min-height: 140px;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-start;
       background: linear-gradient(135deg, #37474f 0%, #263238 100%);
       color: white;
       border-radius: 10px;
       gap: 12px;
+      overflow-y: auto;
+      padding: 20px 16px;
+      box-sizing: border-box;
     }
     .placeholder-icon { font-size: 3rem; opacity: 0.6; }
     .file-input { display: none; }
@@ -316,13 +327,13 @@
     .timeline {
       background: white;
       border-radius: 8px;
-      padding: 8px 12px;
+      padding: 6px 12px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.08);
       flex-shrink: 0;
     }
     .timeline h3 { font-size: 0.75rem; color: #455a64; margin-bottom: 6px; font-weight: 600; }
     .timeline-bar {
-      height: 28px;
+      height: 20px;
       background: #eceff1;
       border-radius: 4px;
       position: relative;
@@ -367,8 +378,8 @@
     }
     .legend {
       display: flex;
-      gap: 10px;
-      margin-top: 4px;
+      gap: 8px;
+      margin-top: 2px;
     }
     .legend-item {
       display: flex;
@@ -385,7 +396,7 @@
       flex-grow: 0;
       background: white;
       border-radius: 10px;
-      padding: 8px 14px;
+      padding: 6px 10px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.08);
       display: flex;
       gap: 14px;
@@ -798,6 +809,29 @@
     [data-tooltip]:hover::before {
       opacity: 0.92;
     }
+    /* 画面端のボタン：吹き出しを内側に寄せて見切れを防ぐ（:hover規則より高詳細度にする） */
+    [data-tooltip][data-tooltip-align="left"]::after,
+    [data-tooltip][data-tooltip-align="left"]:hover::after {
+      left: 0;
+      transform: translateX(0) translateY(4px);
+    }
+    [data-tooltip][data-tooltip-align="left"]:hover::after {
+      transform: translateX(0) translateY(0);
+    }
+    [data-tooltip][data-tooltip-align="right"]::after,
+    [data-tooltip][data-tooltip-align="right"]:hover::after {
+      left: auto;
+      right: 0;
+      transform: translateX(0) translateY(4px);
+    }
+    [data-tooltip][data-tooltip-align="right"]:hover::after {
+      transform: translateX(0) translateY(0);
+    }
+    /* ツールチップが隣のボタン・ボックスの裏に隠れないように、ホバー中の要素と祖先を前面へ */
+    [data-tooltip]:hover { z-index: 1001; }
+    .cat-box:hover { position: relative; z-index: 60; }
+    .big4-group:hover { z-index: 50; }
+    .quick-actions:hover, .target-bar:hover { position: relative; z-index: 40; }
     [data-tooltip]:hover::after {
       transform: translateX(-50%) translateY(0);
     }
@@ -876,20 +910,50 @@
     }
 
     .box-row {
-      display: grid;
-      grid-template-columns: repeat(8, 1fr);
-      gap: 5px;
+      display: flex;
+      gap: 8px;
       flex-shrink: 0;
+      align-items: stretch;
+    }
+    .big4-group {
+      border: 2px solid;
+      border-radius: 12px;
+      padding: 10px 4px 4px;
+      position: relative;
+      display: grid;
+      gap: 5px;
+      min-width: 0;
+    }
+    .big4-label {
+      position: absolute;
+      top: 0;
+      left: 10px;
+      transform: translateY(-55%);
+      background: white;
+      padding: 1px 9px;
+      font-size: 0.66rem;
+      font-weight: 800;
+      border-radius: 10px;
+      border: 2px solid;
+      white-space: nowrap;
+      line-height: 1.4;
+      z-index: 1;
+    }
+    .big4-caption {
+      flex-shrink: 0;
+      font-size: 0.6rem;
+      color: #90a4ae;
+      padding: 2px 4px 0;
     }
     .box-row .cat-box {
-      padding: 6px 5px;
-      gap: 4px;
+      padding: 4px;
+      gap: 3px;
     }
     .box-row .cat-box-header { font-size: 0.72rem; }
     .box-row .sub-btn {
-      padding: 7px 3px;
+      padding: 5px 3px;
       font-size: 0.7rem;
-      min-height: 30px;
+      min-height: 26px;
     }
     .cat-box {
       background: white;
@@ -1179,12 +1243,21 @@
       { type: 'direct_instruction', subType: 'demo',         label: '演示',
         group: 'direct',  btnClass: 'direct',
         desc: '教師が動きを実際にやって見せる場面' },
-      { type: 'direct_instruction', subType: 'explanation',  label: '説明',
+      { type: 'direct_instruction', subType: 'explain_goal',    label: '説明:目標',
         group: 'direct',  btnClass: 'direct',
-        desc: '学習目標・学習内容・学習方法など、教師による言葉での指導' },
-      { type: 'direct_instruction', subType: 'direction',    label: '指示',
+        desc: '学習のねらい・めあてに関する説明' },
+      { type: 'direct_instruction', subType: 'explain_content', label: '説明:内容',
         group: 'direct',  btnClass: 'direct',
-        desc: '指示の発出や、笛・タンバリン等の合図による指示' },
+        desc: '技術・戦術・ルール・マナー等に関する説明' },
+      { type: 'direct_instruction', subType: 'explain_method',  label: '説明:方法',
+        group: 'direct',  btnClass: 'direct',
+        desc: '練習の進め方・場や用具の設定・役割分担の説明（長すぎると授業評価と負相関）' },
+      { type: 'direct_instruction', subType: 'direction',       label: '指示',
+        group: 'direct',  btnClass: 'direct',
+        desc: '活動内容や方法について命令したり注意を促す言語的行動' },
+      { type: 'direct_instruction', subType: 'signal',          label: '合図',
+        group: 'direct',  btnClass: 'direct',
+        desc: '笛・太鼓・タンバリン・手拍子等による非言語的指示（熟練教師が多用）' },
       // 補助活動
       { type: 'aux_activity',       subType: 'assist',       label: '補助',
         group: 'aux',     btnClass: 'assist',
@@ -1213,13 +1286,66 @@
 
     // ボックスの主カテゴリ（2段目に3ボックス並べる）
     const TEACHER_BOX_GROUPS = [
-      { id: 'direct', icon: '📢', label: '直接指導', titleColor: '#dc2626',
+      { id: 'direct', icon: '📢', label: '直接的指導', titleColor: '#dc2626',
         items: TEACHER_ACTIVITIES.filter(a => a.group === 'direct') },
-      { id: 'aux',    icon: '🤝', label: '補助活動', titleColor: '#14b8a6',
+      { id: 'aux',    icon: '🤝', label: '補助的活動', titleColor: '#14b8a6',
         items: TEACHER_ACTIVITIES.filter(a => a.group === 'aux') },
-      { id: 'state',  icon: '🚶', label: '教師状態', titleColor: '#10b981',
+      { id: 'state',  icon: '🚶', label: '状態', titleColor: '#10b981',
         items: TEACHER_ACTIVITIES.filter(a => a.group === 'state') }
     ];
+
+    // === 比較基準値（高橋ら1991＝小学校66授業 / 岡沢ら1995＝中学校29授業・教材別） ===
+    const BENCHMARKS = {
+      elementary:   { label: '小学校66授業平均（高橋ら1991）',
+        values: { management: 27.04, direct_instruction: 21.29, patrol: 25.86, interaction: 21.48, aux_activity: 2.85, non_functional: 1.47 },
+        targets: { all: 57.85, group: 17.58, individual: 24.57 } },
+      junior:       { label: '中学校29授業平均（岡沢ら1995）',
+        values: { management: 29.07, direct_instruction: 15.42, patrol: 28.61, interaction: 21.62, aux_activity: null, non_functional: null },
+        targets: { all: 40.38, group: 35.43, individual: 24.19 } },
+      junior_ball:  { label: '中学・球技（岡沢ら1995）',
+        values: { management: 25.75, direct_instruction: 14.07, patrol: 30.96, interaction: 22.14, aux_activity: null, non_functional: null },
+        targets: null },
+      junior_track: { label: '中学・陸上競技（岡沢ら1995）',
+        values: { management: 36.81, direct_instruction: 13.39, patrol: 25.94, interaction: 21.59, aux_activity: null, non_functional: null },
+        targets: null },
+      junior_gym:   { label: '中学・器械運動（岡沢ら1995）',
+        values: { management: 32.04, direct_instruction: 28.67, patrol: 19.95, interaction: 18.34, aux_activity: null, non_functional: null },
+        targets: null }
+    };
+    const MAIN_ROW_ORDER = [
+      ['management', '🧰 マネジメント'],
+      ['direct_instruction', '📢 直接的指導'],
+      ['patrol', '🚶 巡視'],
+      ['interaction', '💬 相互作用'],
+      ['aux_activity', '🤝 補助的活動'],
+      ['non_functional', '💤 非機能']
+    ];
+    const labelOfSubKey = (key) => {
+      const parts = key.split(':');
+      const t = parts[0];
+      if (t === 'feedback') {
+        const v = FB_VALENCES.find(x => x.id === parts[1]);
+        const d = FB_DIMENSIONS.find(x => x.id === parts[2]);
+        return `FB:${v ? v.label : ''}・${d ? d.label : ''}・${parts[3] === 'true' ? '具体' : '一般'}`;
+      }
+      if (t === 'question') return '発問:' + ((QUESTION_TYPES.find(x => x.id === parts[1]) || {}).label || '');
+      if (t === 'reception') return '受理:' + ((RECEPTION_TYPES.find(x => x.id === parts[1]) || {}).label || '');
+      if (t === 'encouragement') return '励まし:' + ((ENCOURAGEMENT_TYPES.find(x => x.id === parts[1]) || {}).label || '');
+      if (t === 'aux_interaction') return '補助的相互作用';
+      if (t === 'direct_instruction') {
+        if (parts[1] === 'explanation') return '説明';
+        const a = TEACHER_ACTIVITIES.find(x => x.type === t && x.subType === parts[1]);
+        return a ? a.label : '直接的指導';
+      }
+      if (t === 'aux_activity') {
+        const a = TEACHER_ACTIVITIES.find(x => x.type === t && x.subType === parts[1]);
+        return a ? a.label : '補助的活動';
+      }
+      if (t === 'patrol') return '巡視';
+      if (t === 'maintenance') return '維持・管理';
+      if (t === 'non_functional') return '非機能';
+      return key;
+    };
 
     const getSubLabel = (i) => {
       if (i.type === 'question') return (QUESTION_TYPES.find(x => x.id === i.subType) || {}).label || '';
@@ -1325,6 +1451,7 @@
       const [records, setRecords] = useState([]);
       const [interactions, setInteractions] = useState([]);
       const [aggregatedData, setAggregatedData] = useState(null);
+      const [benchmarkKey, setBenchmarkKey] = useState('elementary');
       const [isLoaded, setIsLoaded] = useState(false);
       const [saveStatus, setSaveStatus] = useState('');
       const [hasSavedSession, setHasSavedSession] = useState(false);
@@ -1339,6 +1466,7 @@
       const [targetScope, setTargetScope] = useState('individual');
       // FBモーダル: { valence: 'positive'|'corrective'|'negative' } またはnull
       const [fbModalValence, setFbModalValence] = useState(null);
+      const [diPopover, setDiPopover] = useState(null); // 'explain' | 'direction'
       // FBモーダルを開いたとき動画が再生中だったか（閉じた時に再開判定用）
       const wasPlayingBeforeModal = useRef(false);
       // 教師活動の現在のアクティブ状態（stateKey形式）
@@ -1599,7 +1727,7 @@
       // ただし同じ価のFBが既にアクティブ中ならモーダル開かず終了（場面と同じトグル）
       const openFbModal = (valence) => {
         if ((activeTeacherActivity || '').startsWith(`feedback:${valence}:`)) {
-          // 同じ価がアクティブ → 直接終了
+          // 同じ価がアクティブ → 再タップで終了
           setActiveTeacherActivity(null);
           recordEvent('_stop', {});
           return;
@@ -1615,6 +1743,24 @@
       };
       const closeFbModal = () => {
         setFbModalValence(null);
+        if (wasPlayingBeforeModal.current && videoRef.current) {
+          videoRef.current.play().catch(e => console.log('Play error:', e));
+          setIsPlaying(true);
+        }
+        wasPlayingBeforeModal.current = false;
+      };
+      const openDiPopover = (kind) => {
+        if (videoRef.current && !videoRef.current.paused) {
+          wasPlayingBeforeModal.current = true;
+          videoRef.current.pause();
+          setIsPlaying(false);
+        } else {
+          wasPlayingBeforeModal.current = false;
+        }
+        setDiPopover(kind);
+      };
+      const closeDiPopover = () => {
+        setDiPopover(null);
         if (wasPlayingBeforeModal.current && videoRef.current) {
           videoRef.current.play().catch(e => console.log('Play error:', e));
           setIsPlaying(true);
@@ -1684,6 +1830,89 @@
       const getRecordDuration = (r) => {
         const end = r.endTime !== null ? r.endTime : currentTime;
         return Math.max(0, end - r.startTime);
+      };
+
+      // === 高橋ら(1991)方式：3秒ビンによる排他的割当 ===
+      // 全ボタン＝「押すと開始、再タップか別ボタンで終了」の継続状態。
+      // 全時間を3秒ビンに分割し、各ビンにその時点でアクティブな行動を1つ割当（合計100%）
+      // ・マネジメント場面のビン＋体育的場面の「維持・管理」→ マネジメント総量
+      const BIN_MS = 3000;
+      const ALL_BEHAVIOR_TYPES = ['question', 'reception', 'encouragement', 'feedback', 'aux_interaction',
+        'direct_instruction', 'aux_activity', 'patrol', 'maintenance', 'non_functional'];
+      const INTERACTION_TYPES_SET = ['question', 'reception', 'encouragement', 'feedback', 'aux_interaction'];
+      const subKeyOf = (ev) => {
+        if (ev.type === 'feedback') return `feedback:${ev.feedbackType}:${ev.feedbackDimension}:${ev.isSpecific}`;
+        return ev.subType ? `${ev.type}:${ev.subType}` : ev.type;
+      };
+      const computeBinStats = (denomRaw) => {
+        const nBins = Math.max(0, Math.floor(denomRaw / BIN_MS));
+        const stateEvents = interactions
+          .filter(i => ALL_BEHAVIOR_TYPES.includes(i.type) || i.type === '_stop')
+          .sort((a, b) => a.timestamp - b.timestamp);
+        const sceneAt = (t) => {
+          const rec = records.find(r => r.startTime <= t && (r.endTime === null ? true : t < r.endTime));
+          return rec ? rec.category : null;
+        };
+        const stateAt = (t) => {
+          let cur = null;
+          for (const ev of stateEvents) {
+            if (ev.timestamp > t) break;
+            cur = ev.type === '_stop' ? null : ev;
+          }
+          return cur;
+        };
+        const mainBins = { management: 0, direct_instruction: 0, patrol: 0, interaction: 0, aux_activity: 0, non_functional: 0, untracked: 0 };
+        const subBins = {};
+        const targetBins = { all: 0, group: 0, individual: 0 };
+        const binSeries = []; // 研究用：3秒ビンごとの生データ系列
+        for (let b = 0; b < nBins; b++) {
+          const mid = b * BIN_MS + BIN_MS / 2;
+          const scene = sceneAt(mid);
+          const isMgmtScene = scene === 'management';
+          const ev = stateAt(mid);
+          if (ev && ev.targetScope) targetBins[ev.targetScope] = (targetBins[ev.targetScope] || 0) + 1;
+          const rec = { bin: b, start: b * BIN_MS, scene: scene, target: ev ? ev.targetScope : null };
+          if (isMgmtScene) {
+            mainBins.management++;
+            if (ev) { const k = 'M:' + subKeyOf(ev); subBins[k] = (subBins[k] || 0) + 1; }
+            rec.main = 'management';
+            rec.sub = ev ? subKeyOf(ev) : null;
+            binSeries.push(rec);
+            continue;
+          }
+          if (!ev) {
+            mainBins.untracked++;
+            rec.main = 'untracked'; rec.sub = null;
+            binSeries.push(rec);
+            continue;
+          }
+          if (ev.type === 'maintenance') {
+            mainBins.management++;
+            subBins['M:maintenance'] = (subBins['M:maintenance'] || 0) + 1;
+            rec.main = 'management'; rec.sub = 'maintenance';
+            binSeries.push(rec);
+            continue;
+          }
+          const main = INTERACTION_TYPES_SET.includes(ev.type) ? 'interaction' : ev.type;
+          mainBins[main]++;
+          const k = subKeyOf(ev);
+          subBins[k] = (subBins[k] || 0) + 1;
+          rec.main = main; rec.sub = k;
+          binSeries.push(rec);
+        }
+        const mainDurations = {};
+        Object.keys(mainBins).forEach(k => { if (k !== 'untracked') mainDurations[k] = mainBins[k] * BIN_MS; });
+        const subDurations = {};
+        Object.keys(subBins).forEach(k => { subDurations[k] = subBins[k] * BIN_MS; });
+        return {
+          denomTime: nBins * BIN_MS,
+          nBins,
+          mainDurations,
+          subDurations,
+          targetBins,
+          binSeries,
+          untrackedTime: mainBins.untracked * BIN_MS
+        };
       };
 
       const getCategoryStats = (categoryId) => {
@@ -1764,6 +1993,90 @@
           return { 'カテゴリ': cat.label, '時間': formatTimeDetail(stats.totalTime), '時間(秒)': Math.round(stats.totalTime / 1000), '割合(%)': Math.round(stats.percentage * 10) / 10, '回数': stats.count };
         });
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(periodData), '期間記録');
+
+        // 教師行動構造（上位・下位カテゴリーの割合 / 3秒ビン集計・高橋ら1991方式）
+        const binX = computeBinStats(currentTime > 0 ? currentTime : duration);
+        const bmX = BENCHMARKS[benchmarkKey];
+        const structSheet = [];
+        MAIN_ROW_ORDER.forEach(([k, label]) => {
+          const ms = binX.mainDurations[k] || 0;
+          const pct = binX.denomTime > 0 ? ms / binX.denomTime * 100 : 0;
+          const ref = bmX.values[k];
+          structSheet.push({
+            '上位カテゴリ': label.replace(/^[^ ]+ /, ''), '下位カテゴリ': '',
+            '時間(秒)': Math.round(ms / 1000), '割合(%)': Math.round(pct * 10) / 10,
+            '基準(%)': ref == null ? '-' : ref,
+            '差(pt)': ref == null ? '-' : Math.round((pct - ref) * 10) / 10
+          });
+          let subKeys = [];
+          if (k === 'management') {
+            subKeys = Object.keys(binX.subDurations).filter(x => x.startsWith('M:')).sort()
+              .map(x => [x, labelOfSubKey(x.slice(2))]);
+          } else if (k === 'direct_instruction') {
+            subKeys = Object.keys(binX.subDurations).filter(x => !x.startsWith('M:') && x.startsWith('direct_instruction:')).sort()
+              .map(x => [x, labelOfSubKey(x)]);
+          } else if (k === 'interaction') {
+            subKeys = Object.keys(binX.subDurations).filter(x => !x.startsWith('M:') && /^(question|reception|encouragement|feedback|aux_interaction)/.test(x)).sort()
+              .map(x => [x, labelOfSubKey(x)]);
+          } else if (k === 'aux_activity') {
+            subKeys = Object.keys(binX.subDurations).filter(x => !x.startsWith('M:') && x.startsWith('aux_activity:')).sort()
+              .map(x => [x, labelOfSubKey(x)]);
+          }
+          subKeys.forEach(([x, subLabel]) => {
+            const sms = binX.subDurations[x];
+            structSheet.push({
+              '上位カテゴリ': '', '下位カテゴリ': subLabel,
+              '時間(秒)': Math.round(sms / 1000),
+              '割合(%)': binX.denomTime > 0 ? Math.round(sms / binX.denomTime * 1000) / 10 : 0,
+              '基準(%)': '', '差(pt)': ''
+            });
+          });
+        });
+        structSheet.push({ '上位カテゴリ': '（未記録）', '下位カテゴリ': '',
+          '時間(秒)': Math.round(binX.untrackedTime / 1000),
+          '割合(%)': binX.denomTime > 0 ? Math.round(binX.untrackedTime / binX.denomTime * 1000) / 10 : 0,
+          '基準(%)': '-', '差(pt)': '-' });
+        structSheet.push({ '上位カテゴリ': `※比較基準: ${bmX.label}`, '下位カテゴリ': '',
+          '時間(秒)': '', '割合(%)': '', '基準(%)': '', '差(pt)': '' });
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(structSheet), '教師行動構造');
+
+
+        // 対象次元
+        const tbX = binX.targetBins || {};
+        const tgtTotal = (tbX.all || 0) + (tbX.group || 0) + (tbX.individual || 0);
+        const tgtSheet = [['all', 'クラス全体'], ['group', '小集団'], ['individual', '個人']].map(([k, label]) => ({
+          '対象': label, 'ビン数': tbX[k] || 0,
+          '割合(%)': tgtTotal > 0 ? Math.round((tbX[k] || 0) / tgtTotal * 1000) / 10 : 0,
+          '基準(%)': bmX.targets ? bmX.targets[k] : '-'
+        }));
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tgtSheet), '対象次元');
+
+        // 授業情報（分析メタデータ）
+        const infoSheet = [
+          { '項目': '動画ファイル', '値': videoName || '-' },
+          { '項目': '分析日時', '値': new Date().toLocaleString('ja-JP') },
+          { '項目': '分析時間（分母）', '値': formatTimeDetail(binX.denomTime) + '（' + binX.nBins + 'ビン × 3秒）' },
+          { '項目': '比較基準', '値': bmX.label },
+          { '項目': '集計方式', '値': '3秒ビン排他割当（高橋ら1991の観察法に準拠）' },
+          { '項目': '出典1', '値': '高橋健夫ほか(1991) 体育授業における教師行動に関する研究. 体育学研究36:193-208' },
+          { '項目': '出典2', '値': '岡沢祥訓ほか(1995) 中学校体育授業における教師行動に関する研究. 奈良教育大学紀要44(1):57-68' }
+        ];
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(infoSheet), '授業情報');
+
+        // ビン系列（3秒ごとの生データ：SPSS/R での再分析・観察者間一致率の算出用）
+        const MAIN_JP = { management: 'マネジメント', direct_instruction: '直接的指導', patrol: '巡視',
+          interaction: '相互作用', aux_activity: '補助的活動', non_functional: '非機能', untracked: '未記録' };
+        const SCENE_JP = { instruction: '学習指導', management: 'マネジメント', cognitive: '認知学習', motor: '運動学習' };
+        const binSheet = (binX.binSeries || []).map(rec => ({
+          'ビン': rec.bin + 1,
+          '開始': formatTime(rec.start),
+          '終了': formatTime(rec.start + 3000),
+          '場面': rec.scene ? (SCENE_JP[rec.scene] || rec.scene) : '-',
+          '上位カテゴリ': MAIN_JP[rec.main] || rec.main,
+          '下位カテゴリ': rec.sub ? labelOfSubKey(rec.sub) : '-',
+          '対象': rec.target === 'all' ? '全体' : rec.target === 'group' ? '小集団' : rec.target === 'individual' ? '個人' : '-'
+        }));
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(binSheet), 'ビン系列(3秒)');
 
         // 相互作用の詳細（1件ずつ、コメント付き）
         const interactionDetail = interactions.map(i => {
@@ -1985,68 +2298,28 @@
           interactionData[key].entries.sort((a, b) => a.timestamp - b.timestamp);
         });
 
-        // === 教師行動の時間割合（切替点から自動計算） ===
-        // 全教師行動ボタン（相互作用5種＋直接指導/補助活動/教師状態）が対象
-        // 押した瞬間 → 開始、次のボタン押下 → 終了、最後は currentTime まで（動画末尾まで埋まらないように）
-        // _stop イベントは終端マーカーとして扱い、それ自体は集計しない
-        const activityEvents = interactions
-          .filter(i => ALL_TEACHER_TYPES.includes(i.type) || i.type === '_stop')
-          .sort((a, b) => a.timestamp - b.timestamp);
-        const subDurations = {};
-        const mainDurations = {};
-        for (let k = 0; k < activityEvents.length; k++) {
-          const ev = activityEvents[k];
-          if (ev.type === '_stop') continue; // 終端マーカーは集計スキップ
-          const next = k < activityEvents.length - 1 ? activityEvents[k+1].timestamp : currentTime;
-          const dur = Math.max(0, next - ev.timestamp);
-          // 主カテゴリで集計
-          const main = getMainCategory(ev.type);
-          mainDurations[main] = (mainDurations[main] || 0) + dur;
-          // サブキーで集計
-          let subKey;
-          if (ev.type === 'feedback') {
-            subKey = `feedback:${ev.feedbackType}:${ev.feedbackDimension}:${ev.isSpecific}`;
-          } else if (ev.subType) {
-            subKey = `${ev.type}:${ev.subType}`;
-          } else {
-            subKey = ev.type;
-          }
-          subDurations[subKey] = (subDurations[subKey] || 0) + dur;
-        }
-        const totalActivityTime = Object.values(mainDurations).reduce((s, d) => s + d, 0);
-        const denomTime = currentTime > 0 ? currentTime : duration;
-        const untrackedTime = Math.max(0, denomTime - totalActivityTime);
-
+        // === 高橋ら(1991)方式：3秒ビン＋優先システムによる集計 ===
+        const bin = computeBinStats(currentTime > 0 ? currentTime : duration);
+        const subsFor = (pred) => Object.keys(bin.subDurations)
+          .filter(k => !k.startsWith('M:') && pred(k))
+          .sort()
+          .map(k => ({ sub: k, label: '└ ' + labelOfSubKey(k) }));
         const teacherStats = {
-          denomTime,
-          subDurations,
-          mainDurations,
-          untrackedTime,
-          rows: [
-            { key: 'interaction', label: '💬相互作用', subs: [
-              ...QUESTION_TYPES.map(q => ({ sub: `question:${q.id}`, label: `└ 発問:${q.label}` })),
-              ...RECEPTION_TYPES.map(r => ({ sub: `reception:${r.id}`, label: `└ 受理:${r.label}` })),
-              ...ENCOURAGEMENT_TYPES.map(e => ({ sub: `encouragement:${e.id}`, label: `└ 励まし:${e.label}` })),
-              { sub: 'aux_interaction', label: '└ 補助的相互作用' },
-              ...FB_VALENCES.flatMap(v => FB_DIMENSIONS.flatMap(d => [
-                { sub: `feedback:${v.id}:${d.id}:false`, label: `└ FB:${v.label}・${d.label}・一般` },
-                { sub: `feedback:${v.id}:${d.id}:true`,  label: `└ FB:${v.label}・${d.label}・具体` }
-              ]))
-            ]},
-            { key: 'direct_instruction', label: '📢直接指導', subs: [
-              { sub: 'direct_instruction:demo',         label: '└ 演示' },
-              { sub: 'direct_instruction:explanation',  label: '└ 説明' },
-              { sub: 'direct_instruction:direction',    label: '└ 指示' }
-            ]},
-            { key: 'aux_activity', label: '🤝補助活動', subs: [
-              { sub: 'aux_activity:assist',       label: '└ 補助' },
-              { sub: 'aux_activity:participate',  label: '└ 運動参加' },
-              { sub: 'aux_activity:judge_record', label: '└ 審判・記録' }
-            ]},
-            { key: 'patrol',         label: '🚶巡視',     subs: [] },
-            { key: 'maintenance',    label: '🛡維持管理', subs: [] },
-            { key: 'non_functional', label: '💤非機能',   subs: [] }
-          ]
+          ...bin,
+          rows: MAIN_ROW_ORDER.map(([key, label]) => {
+            let subs = [];
+            if (key === 'management') {
+              subs = Object.keys(bin.subDurations).filter(k => k.startsWith('M:')).sort()
+                .map(k => ({ sub: k, label: '└ ' + labelOfSubKey(k.slice(2)) }));
+            } else if (key === 'direct_instruction') {
+              subs = subsFor(k => k.startsWith('direct_instruction:'));
+            } else if (key === 'interaction') {
+              subs = subsFor(k => /^(question|reception|encouragement|feedback|aux_interaction)/.test(k));
+            } else if (key === 'aux_activity') {
+              subs = subsFor(k => k.startsWith('aux_activity:'));
+            }
+            return { key, label, subs };
+          })
         };
 
         setAggregatedData({ categoryData, interactionData, teacherStats, totalDuration: duration, timestamp: Date.now() });
@@ -2257,7 +2530,6 @@
 
               {/* タイムライン（2バー：上=児童学習場面、下=教師活動） */}
               <div className="timeline">
-                <h3>📊 タイムライン</h3>
 
                 {/* 上段：児童学習場面（期間記録） */}
                 <div style={{display:'flex',alignItems:'center',gap:'6px',marginBottom:'3px'}}>
@@ -2292,15 +2564,14 @@
                     }
                   }}>
                     {(() => {
-                      // 教師活動イベント + _stop イベント を時系列に
+                      // 全教師行動＝「押すと開始、再タップ/別ボタンで終了」の帯
                       const acts = interactions
                         .filter(i => ALL_TEACHER_TYPES.includes(i.type) || i.type === '_stop')
                         .sort((a, b) => a.timestamp - b.timestamp);
                       const segments = [];
                       for (let i = 0; i < acts.length; i++) {
                         const ev = acts[i];
-                        if (ev.type === '_stop') continue; // _stop は終端として使うだけで描画しない
-                        // 次のイベント（_stop含む）または currentTime まで
+                        if (ev.type === '_stop') continue;
                         const next = i < acts.length - 1 ? acts[i+1].timestamp : currentTime;
                         const startPos = duration > 0 ? (ev.timestamp / duration) * 100 : 0;
                         const width = duration > 0 ? Math.max(0, (next - ev.timestamp) / duration * 100) : 0;
@@ -2345,17 +2616,23 @@
                     </button>
                   ))}
                 </div>
-                <span className="target-bar-hint">以下のボタンはこの対象で記録されます</span>
+                <span className="target-bar-hint"
+                  data-tooltip="マネジメント％＝場面レーンの「マネジメント」区分＋体育的場面の「維持管理」。状態のうち「巡視」は巡視、「非機能」は非機能として集計されます。"
+                  style={{cursor:'help'}}>
+                  以下のボタンはこの対象で記録｜🧰 マネジメント％は場面レーン＋「維持管理」から自動算出
+                </span>
               </div>
 
               {/* 5ボックス並列：発問・受理・励まし・FB・補助 */}
               <div className="box-row">
+                <div className="big4-group" style={{borderColor:'#f59e0b', flex:'5 1 0', gridTemplateColumns:'repeat(5, 1fr)'}}>
+                  <span className="big4-label" style={{color:'#b45309', borderColor:'#f59e0b'}}>💬 相互作用</span>
                 <div className="cat-box">
                   <div className="cat-box-header"><span className="icon">🎤</span>発問<span className="count">{getInteractionCount('question')}</span></div>
                   {QUESTION_TYPES.map(qt => {
                     const isActive = activeTeacherActivity === `question:${qt.id}`;
                     return (
-                      <button key={qt.id} data-tooltip={qt.desc}
+                      <button key={qt.id} data-tooltip={qt.desc} data-tooltip-align="left"
                         className={`sub-btn q ${isActive ? 'is-active' : ''}`}
                         onClick={() => addQuestion(qt.id)}>{qt.label}</button>
                     );
@@ -2438,29 +2715,89 @@
                     補助的相互作用
                   </div>
                 </div>
-                {/* 直接指導・補助活動・教師状態（切替点記録） */}
-                {TEACHER_BOX_GROUPS.map(grp => (
-                  <div key={grp.id} className="cat-box activity">
-                    <div className="cat-box-header" style={{color: grp.titleColor}}>
-                      <span className="icon">{grp.icon}</span>{grp.label}
-                    </div>
-                    {grp.items.map(item => {
-                      const isActive = activeTeacherActivity === stateKey(item.type, item.subType);
-                      const count = interactions.filter(i =>
-                        i.type === item.type &&
-                        (item.subType ? i.subType === item.subType : true)
-                      ).length;
-                      return (
-                        <button key={stateKey(item.type, item.subType)}
-                          data-tooltip={item.desc}
-                          className={`sub-btn ${item.btnClass} ${isActive ? 'is-active' : ''}`}
-                          onClick={() => addTeacherActivity(item.type, item.subType)}>
-                          {item.label}（{count}）
+                </div>
+                {/* 直接的指導・補助的活動・状態（4大行動グループ） */}
+                {TEACHER_BOX_GROUPS.map(grp => {
+                  if (grp.id === 'direct') {
+                    const demoItem = TEACHER_ACTIVITIES.find(a => a.type === 'direct_instruction' && a.subType === 'demo');
+                    const explainItems = TEACHER_ACTIVITIES.filter(a => a.type === 'direct_instruction' && String(a.subType).startsWith('explain'));
+                    const directionItems = TEACHER_ACTIVITIES.filter(a => a.type === 'direct_instruction' && (a.subType === 'direction' || a.subType === 'signal'));
+                    const countOf = (subs) => interactions.filter(i => i.type === 'direct_instruction' && subs.includes(i.subType)).length;
+                    const demoActive = activeTeacherActivity === 'direct_instruction:demo';
+                    const explainActive = (activeTeacherActivity || '').startsWith('direct_instruction:explain');
+                    const directionActive = activeTeacherActivity === 'direct_instruction:direction' || activeTeacherActivity === 'direct_instruction:signal';
+                    return (
+                      <div key={grp.id} className="big4-group" style={{borderColor: grp.titleColor, flex:'1 1 0'}}>
+                        <span className="big4-label" style={{color: grp.titleColor, borderColor: grp.titleColor}}>{grp.icon} {grp.label}</span>
+                        <div className="cat-box activity" style={{position:'relative'}}>
+                        <button data-tooltip={demoItem.desc}
+                          className={`sub-btn direct ${demoActive ? 'is-active' : ''}`}
+                          onClick={() => addTeacherActivity('direct_instruction', 'demo')}>
+                          演示（{countOf(['demo'])}）
                         </button>
-                      );
-                    })}
-                  </div>
-                ))}
+                        <button data-tooltip="学習目標・学習内容・学習方法の説明（タップして下位を選択／再タップで終了）"
+                          className={`sub-btn direct ${explainActive ? 'is-active' : ''}`}
+                          onClick={() => explainActive ? addTeacherActivity('direct_instruction', activeTeacherActivity.split(':')[1]) : openDiPopover('explain')}>
+                          説明（{countOf(['explain_goal','explain_content','explain_method','explanation'])}）
+                        </button>
+                        <button data-tooltip="指示・合図（タップして下位を選択／再タップで終了）"
+                          className={`sub-btn direct ${directionActive ? 'is-active' : ''}`}
+                          onClick={() => directionActive ? addTeacherActivity('direct_instruction', activeTeacherActivity.split(':')[1]) : openDiPopover('direction')}>
+                          指示（{countOf(['direction','signal'])}）
+                        </button>
+                        {diPopover && (() => {
+                          const opts = diPopover === 'explain' ? explainItems : directionItems;
+                          return (
+                            <>
+                              <div className="fb-popover-backdrop" onClick={closeDiPopover} />
+                              <div className="fb-popover">
+                                <div className="fb-popover-header" style={{color: grp.titleColor}}>
+                                  {diPopover === 'explain' ? '説明：何についての説明？' : '指示：どちらの形？'}
+                                </div>
+                                <div className="fb-popover-grid" style={{gridTemplateColumns: `repeat(${opts.length}, 1fr)`}}>
+                                  {opts.map(o => (
+                                    <button key={o.subType} className="fb-popover-cell"
+                                      data-tooltip={o.desc}
+                                      style={{borderColor: grp.titleColor, color: grp.titleColor, background: grp.titleColor + '14'}}
+                                      onClick={() => { addTeacherActivity('direct_instruction', o.subType); closeDiPopover(); }}>
+                                      {o.label.replace('説明:', '')}
+                                    </button>
+                                  ))}
+                                </div>
+                                <button className="fb-popover-cancel" onClick={closeDiPopover}>キャンセル</button>
+                                <div className="fb-popover-arrow"></div>
+                              </div>
+                            </>
+                          );
+                        })()}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={grp.id} className="big4-group" style={{borderColor: grp.titleColor, flex:'1 1 0'}}>
+                      <span className="big4-label" style={{color: grp.titleColor, borderColor: grp.titleColor}}>{grp.icon} {grp.label}</span>
+                      <div className="cat-box activity">
+                      {grp.items.map(item => {
+                        const isActive = activeTeacherActivity === stateKey(item.type, item.subType);
+                        const count = interactions.filter(i =>
+                          i.type === item.type &&
+                          (item.subType ? i.subType === item.subType : true)
+                        ).length;
+                        return (
+                          <button key={stateKey(item.type, item.subType)}
+                            data-tooltip={item.desc}
+                            {...(grp.id === 'state' ? { 'data-tooltip-align': 'right' } : {})}
+                            className={`sub-btn ${item.btnClass} ${isActive ? 'is-active' : ''}`}
+                            onClick={() => addTeacherActivity(item.type, item.subType)}>
+                            {item.label}（{count}）
+                          </button>
+                        );
+                      })}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -2517,20 +2854,31 @@
                     {/* 教師行動の時間割合（切替点から自動算出） */}
                     {aggregatedData.teacherStats && (
                       <div className="stats-section">
-                        <div className="stats-title">🚶 教師行動の時間割合</div>
+                        <div className="stats-title">🧮 4大教師行動の時間割合（3秒ビン・高橋ら1991方式）</div>
+                        <div style={{display:'flex',alignItems:'center',gap:'6px',margin:'4px 0 6px'}}>
+                          <span style={{fontSize:'0.62rem',color:'#546e7a',fontWeight:700}}>比較基準:</span>
+                          <select value={benchmarkKey} onChange={e => setBenchmarkKey(e.target.value)}
+                            style={{fontSize:'0.62rem',padding:'2px 4px',borderRadius:'4px',border:'1px solid #cfd8dc'}}>
+                            {Object.entries(BENCHMARKS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                          </select>
+                        </div>
                         <table className="stats-table">
-                          <thead><tr><th>カテゴリ</th><th className="number">時間</th><th className="number">%</th></tr></thead>
+                          <thead><tr><th>カテゴリ</th><th className="number">時間</th><th className="number">%</th><th className="number">基準%</th><th className="number">差</th></tr></thead>
                           <tbody>
                             {aggregatedData.teacherStats.rows.map(row => {
                               const denom = aggregatedData.teacherStats.denomTime || 1;
                               const mainDur = aggregatedData.teacherStats.mainDurations[row.key] || 0;
                               const mainPct = (mainDur / denom * 100);
+                              const ref = BENCHMARKS[benchmarkKey].values[row.key];
+                              const diff = ref == null ? null : mainPct - ref;
                               return (
                                 <React.Fragment key={row.key}>
                                   <tr style={{background: mainDur > 0 ? '#f8fafc' : 'transparent', fontWeight: 600}}>
                                     <td>{row.label}</td>
                                     <td className="number">{formatTime(mainDur)}</td>
                                     <td className="number">{mainPct.toFixed(1)}%</td>
+                                    <td className="number" style={{color:'#90a4ae'}}>{ref == null ? '–' : ref.toFixed(1) + '%'}</td>
+                                    <td className="number" style={{color: diff == null ? '#90a4ae' : Math.abs(diff) < 5 ? '#546e7a' : '#c62828', fontWeight: 600}}>{diff == null ? '–' : (diff > 0 ? '+' : '') + diff.toFixed(1)}</td>
                                   </tr>
                                   {row.subs.map(s => {
                                     const subDur = aggregatedData.teacherStats.subDurations[s.sub] || 0;
@@ -2541,6 +2889,8 @@
                                         <td style={{paddingLeft:'14px'}}>{s.label}</td>
                                         <td className="number">{formatTime(subDur)}</td>
                                         <td className="number">{subPct.toFixed(1)}%</td>
+                                        <td className="number"></td>
+                                        <td className="number"></td>
                                       </tr>
                                     );
                                   })}
@@ -2551,12 +2901,26 @@
                               <td>（未記録）</td>
                               <td className="number">{formatTime(aggregatedData.teacherStats.untrackedTime)}</td>
                               <td className="number">{((aggregatedData.teacherStats.untrackedTime / (aggregatedData.teacherStats.denomTime||1)) * 100).toFixed(1)}%</td>
+                              <td className="number"></td><td className="number"></td>
                             </tr>
                           </tbody>
                         </table>
+                        {(() => {
+                          const tb = aggregatedData.teacherStats.targetBins || {};
+                          const total = (tb.all||0) + (tb.group||0) + (tb.individual||0);
+                          const pct = (v) => total > 0 ? ((v||0) / total * 100).toFixed(1) : '0.0';
+                          const refT = BENCHMARKS[benchmarkKey].targets;
+                          return (
+                            <div style={{marginTop:'6px',fontSize:'0.62rem',color:'#546e7a'}}>
+                              🎯 対象次元: クラス全体 {pct(tb.all)}% ／ 小集団 {pct(tb.group)}% ／ 個人 {pct(tb.individual)}%
+                              {refT && <span style={{color:'#90a4ae'}}>（基準: {refT.all}／{refT.group}／{refT.individual}%）</span>}
+                            </div>
+                          );
+                        })()}
                         <div style={{marginTop:'6px',fontSize:'0.6rem',color:'#90a4ae',lineHeight:1.4}}>
-                          ※ 計算法：ボタンを押した瞬間 ⇒ その行動の開始。次の教師行動ボタンが押されるまで継続。最後の行動は<b>現在の再生位置</b>まで（動画末尾までは埋めません）。<br/>
-                          ※ 全8ボックスの全ボタンが共通の「教師の現在行動」を切り替えます。タイムライン下段に6色（相互作用/直接指導/補助活動/巡視/維持管理/非機能）の帯で表示。
+                          ※ 集計法（高橋ら1991準拠）：全時間を3秒ビンに分割し、各ビンにその時点の行動を1つ排他的に割当。全カテゴリー＋未記録の合計が100%になります。<br/>
+                          ※ マネジメント ＝ マネジメント場面の全行動 ＋ 体育的場面の「維持・管理」。「└」はその内訳。上位％は下位の合計に一致します。<br/>
+                          ※ 全ボタン共通：押すと開始、同じボタンを再タップ or 別のボタンを押すと終了。<b>記録開始時に最初の行動ボタン（通常は維持管理か巡視）を押してください</b>（未記録時間を防ぐため）。
                         </div>
                       </div>
                     )}
