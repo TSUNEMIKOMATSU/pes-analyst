@@ -1462,6 +1462,18 @@
       "      self.__core = await self.createFFmpegCore({ wasmBinary: data.wasmBinary });",
       "      self.__core.setLogger(function(l) { self.postMessage({ type: 'LOG', data: l }); });",
       "      self.__core.setProgress(function(p) { self.postMessage({ type: 'PROGRESS', data: p }); });",
+      "      // ストリーミング出力用デバイス: 書き込みを即チャンクとしてページへ転送（メモリに溜めない）",
+      "      var dev = self.__core.FS.makedev(77, 0);",
+      "      self.__core.FS.registerDevice(dev, {",
+      "        open: function(stream) {},",
+      "        write: function(stream, buffer, offset, length, position) {",
+      "          var chunk = new Uint8Array(length);",
+      "          chunk.set(buffer.subarray(offset, offset + length));",
+      "          self.postMessage({ type: 'OUT_CHUNK', data: chunk }, [chunk.buffer]);",
+      "          return length;",
+      "        }",
+      "      });",
+      "      self.__core.FS.mkdev('/outstream', dev);",
       "      ok(true);",
       "    } else if (!self.__core) {",
       "      throw new Error('エンジン未初期化');",
@@ -1488,6 +1500,8 @@
       "      self.__core.FS.mount(fs, data.options, data.mountPoint); ok(true);",
       "    } else if (type === 'UNMOUNT') {",
       "      self.__core.FS.unmount(data.mountPoint); ok(true);",
+      "    } else if (type === 'LIST_DIR') {",
+      "      ok(self.__core.FS.readdir(data.path));",
       "    } else {",
       "      throw new Error('unknown message type: ' + type);",
       "    }",
@@ -1501,6 +1515,8 @@
         this.msgId = 0;
         this.pending = new Map();
         this.progressCb = null;
+        this.outChunkCb = null;
+        this.logCb = null;
       }
       _ensureWorker() {
         if (this.worker) return;
@@ -1509,7 +1525,8 @@
         this.worker.onmessage = (e) => {
           const { id, type, data } = e.data;
           if (type === 'PROGRESS') { if (this.progressCb) this.progressCb(data); return; }
-          if (type === 'LOG') return;
+          if (type === 'OUT_CHUNK') { if (this.outChunkCb) this.outChunkCb(data); return; }
+          if (type === 'LOG') { if (this.logCb) this.logCb(data); return; }
           const p = this.pending.get(id);
           if (!p) return;
           this.pending.delete(id);
@@ -1539,6 +1556,7 @@
       deleteDir(path) { return this._call('DELETE_DIR', { path }); }
       mount(fsType, options, mountPoint) { return this._call('MOUNT', { fsType, options, mountPoint }); }
       unmount(mountPoint) { return this._call('UNMOUNT', { mountPoint }); }
+      listDir(path) { return this._call('LIST_DIR', { path }); }
       terminate() {
         if (this.worker) { try { this.worker.terminate(); } catch (e) {} }
         this.worker = null;
@@ -1673,13 +1691,39 @@
     };
 
     // MTS→MP4変換（映像は無劣化コピー、音声のみAC-3→AACに変換するため高速）
-    const convertMtsToMp4 = async (file, onProgress) => {
+    // 大容量対策: 出力はメモリ(MEMFS)に書かず、ストリーミングデバイス経由で
+    // 書き込みと同時にチャンクとして取り出してBlob(ディスク側)へ逃がす。
+    // これによりファイルサイズによらずメモリ使用量が一定になる（2GB×6本でもOK）。
+    // 出力はフラグメント化MP4（ストリーミング書き出し可能な形式、ブラウザで再生可）。
+    const convertMtsToStream = async (file, onProgress) => {
       const ffmpeg = await getFFmpeg();
       const MOUNT_DIR = '/mtsmount';
       let mounted = false;
       let memInName = null;
       ffmpeg.progressCb = (p) => {
         if (onProgress) onProgress(Math.max(0, Math.min(1, (p && p.progress) || 0)));
+      };
+      // 出力チャンクを64MBごとにBlob化してメモリから追い出す
+      const parts = [];
+      let buf = [];
+      let bufBytes = 0;
+      ffmpeg.outChunkCb = (u8) => {
+        buf.push(u8);
+        bufBytes += u8.length;
+        if (bufBytes >= 64 * 1024 * 1024) {
+          parts.push(new Blob(buf));
+          buf = [];
+          bufBytes = 0;
+        }
+      };
+      // ログから入力動画の長さを取得（フラグメントMP4はメタデータ上のdurationが取れないことがあるため）
+      let logDurationMs = null;
+      ffmpeg.logCb = (l) => {
+        const msg = (l && l.message) || '';
+        const m = msg.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+        if (m && logDurationMs === null) {
+          logDurationMs = (parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseFloat(m[3])) * 1000;
+        }
       };
       try {
         let inPath;
@@ -1705,15 +1749,19 @@
           '-c:v', 'copy',
           '-c:a', 'aac', '-b:a', '160k', '-ac', '2',
           '-sn', '-dn',
-          'out.mp4'
+          '-f', 'mp4',
+          '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+          '-y', '/outstream'
         ]);
         if (ret !== 0) throw new Error('変換に失敗しました（コード ' + ret + '）');
-        const data = await ffmpeg.readFile('out.mp4');
-        if (!data || data.length === 0) throw new Error('変換結果が空でした');
-        return new Blob([data.buffer], { type: 'video/mp4' });
+        if (buf.length > 0) { parts.push(new Blob(buf)); buf = []; }
+        const blob = new Blob(parts, { type: 'video/mp4' });
+        if (blob.size === 0) throw new Error('変換結果が空でした');
+        return { blob, logDurationMs };
       } finally {
         ffmpeg.progressCb = null;
-        try { await ffmpeg.deleteFile('out.mp4'); } catch (e) {}
+        ffmpeg.outChunkCb = null;
+        ffmpeg.logCb = null;
         if (mounted) {
           try { await ffmpeg.unmount(MOUNT_DIR); } catch (e) {}
           try { await ffmpeg.deleteDir(MOUNT_DIR); } catch (e) {}
@@ -1723,16 +1771,26 @@
     };
 
     // Blob URLから動画の長さ(ms)を取得
+    // フラグメントMP4はメタデータのdurationがInfinity/0のことがあるため、
+    // その場合は末尾へのシークで実際の長さを取得する
     const probeDurationMs = (url) => new Promise((resolve, reject) => {
       const v = document.createElement('video');
+      let settled = false;
+      const cleanup = () => { v.removeAttribute('src'); try { v.load(); } catch (e) {} };
+      const finish = (ms) => { if (!settled) { settled = true; cleanup(); resolve(ms); } };
+      const failTimer = setTimeout(() => { if (!settled) { settled = true; cleanup(); resolve(0); } }, 15000);
       v.preload = 'metadata';
       v.onloadedmetadata = () => {
         const d = v.duration;
-        v.removeAttribute('src');
-        v.load();
-        resolve(isFinite(d) && d > 0 ? d * 1000 : 0);
+        if (isFinite(d) && d > 0) { clearTimeout(failTimer); finish(d * 1000); return; }
+        // duration不明 → 末尾シークで確定させる
+        v.ondurationchange = () => {
+          const d2 = v.duration;
+          if (isFinite(d2) && d2 > 0) { clearTimeout(failTimer); finish(d2 * 1000); }
+        };
+        try { v.currentTime = 1e7; } catch (e) {}
       };
-      v.onerror = () => reject(new Error('変換後の動画を読み込めませんでした'));
+      v.onerror = () => { if (!settled) { settled = true; clearTimeout(failTimer); cleanup(); reject(new Error('変換後の動画を読み込めませんでした')); } };
       v.src = url;
     });
 
@@ -1900,12 +1958,22 @@
             if (_convertCancelled) throw new Error('キャンセルしました');
             const f = sorted[i];
             setConverting({ phase: 'convert', current: i + 1, total: sorted.length, fileName: f.name, progress: 0 });
-            const blob = isMtsFile(f)
-              ? await convertMtsToMp4(f, (p) => setConverting(c => c ? { ...c, progress: p } : c))
-              : f;
+            let blob = f;
+            let logDurationMs = null;
+            if (isMtsFile(f)) {
+              const result = await convertMtsToStream(
+                f,
+                (p) => setConverting(c => c ? { ...c, progress: p } : c)
+              );
+              blob = result.blob;
+              logDurationMs = result.logDurationMs;
+            }
             if (_convertCancelled) throw new Error('キャンセルしました');
             const url = URL.createObjectURL(blob);
-            const durMs = await probeDurationMs(url);
+            let durMs = 0;
+            try { durMs = await probeDurationMs(url); } catch (e) { if (!logDurationMs) throw e; }
+            if (!durMs || !isFinite(durMs)) durMs = logDurationMs || 0;
+            if (!durMs) throw new Error('動画の長さを取得できませんでした（' + f.name + '）');
             segs.push({ url, durationMs: durMs, offsetMs: offset, name: f.name });
             offset += durMs;
           }
