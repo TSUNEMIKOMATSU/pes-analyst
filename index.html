@@ -9,6 +9,7 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- MTS(AVCHD)変換用 ffmpeg.wasm コアは初回利用時にダウンロードし端末にキャッシュ。ワーカーは自前実装(file://対応) -->
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -1432,6 +1433,311 @@
       });
     };
 
+    // ===== MTS(AVCHD)変換: ffmpeg.wasm =====
+    // CDNはjsDelivrを優先、ダメならunpkgにフォールバック
+    const FFMPEG_CDNS = [
+      { ffmpeg: 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd', core: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd' },
+      { ffmpeg: 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd', core: 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd' },
+    ];
+    // size: 進捗計算用の実サイズ(バイト)
+    const ENGINE_FILES = [
+      { key: 'core_js',   rel: (c) => `${c.core}/ffmpeg-core.js`,   type: 'text/javascript',  size: 112059 },
+      { key: 'core_wasm', rel: (c) => `${c.core}/ffmpeg-core.wasm`, type: 'application/wasm', size: 32232419 },
+    ];
+
+    // ---- 自前ワーカー実装 ----
+    // file://で開いた場合、ページ側で作ったblob URLはワーカーから読み込めない(オリジン不一致)ため、
+    // ライブラリ付属のワーカーは使わず、コアJSのソーステキストとwasmバイナリを
+    // postMessageで直接ワーカーに渡して内部で起動する（file://でもhttpでも動く方式）。
+    const FFMPEG_WORKER_SOURCE = [
+      "self.onmessage = async function(e) {",
+      "  var id = e.data.id, type = e.data.type, data = e.data.data;",
+      "  function ok(res, transfer) { self.postMessage({ id: id, type: type, data: res }, transfer || []); }",
+      "  function fail(err) { try { self.postMessage({ id: id, type: 'ERROR', data: String(err && err.message ? err.message : err) }); } catch (e2) {} }",
+      "  try {",
+      "    if (type === 'LOAD') {",
+      "      var blobURL = URL.createObjectURL(new Blob([data.coreJsText], { type: 'text/javascript' }));",
+      "      importScripts(blobURL);",
+      "      if (!self.createFFmpegCore) throw new Error('createFFmpegCore が見つかりません');",
+      "      self.__core = await self.createFFmpegCore({ wasmBinary: data.wasmBinary });",
+      "      self.__core.setLogger(function(l) { self.postMessage({ type: 'LOG', data: l }); });",
+      "      self.__core.setProgress(function(p) { self.postMessage({ type: 'PROGRESS', data: p }); });",
+      "      ok(true);",
+      "    } else if (!self.__core) {",
+      "      throw new Error('エンジン未初期化');",
+      "    } else if (type === 'EXEC') {",
+      "      self.__core.setTimeout(-1);",
+      "      self.__core.exec.apply(self.__core, data.args);",
+      "      var ret = self.__core.ret;",
+      "      self.__core.reset();",
+      "      ok(ret);",
+      "    } else if (type === 'READ_FILE') {",
+      "      var d = self.__core.FS.readFile(data.path, { encoding: 'binary' });",
+      "      ok(d, [d.buffer]);",
+      "    } else if (type === 'WRITE_FILE') {",
+      "      self.__core.FS.writeFile(data.path, data.data); ok(true);",
+      "    } else if (type === 'DELETE_FILE') {",
+      "      self.__core.FS.unlink(data.path); ok(true);",
+      "    } else if (type === 'CREATE_DIR') {",
+      "      self.__core.FS.mkdir(data.path); ok(true);",
+      "    } else if (type === 'DELETE_DIR') {",
+      "      self.__core.FS.rmdir(data.path); ok(true);",
+      "    } else if (type === 'MOUNT') {",
+      "      var fs = self.__core.FS.filesystems[data.fsType];",
+      "      if (!fs) throw new Error('filesystem not available: ' + data.fsType);",
+      "      self.__core.FS.mount(fs, data.options, data.mountPoint); ok(true);",
+      "    } else if (type === 'UNMOUNT') {",
+      "      self.__core.FS.unmount(data.mountPoint); ok(true);",
+      "    } else {",
+      "      throw new Error('unknown message type: ' + type);",
+      "    }",
+      "  } catch (err) { fail(err); }",
+      "};"
+    ].join('\n');
+
+    class MiniFFmpeg {
+      constructor() {
+        this.worker = null;
+        this.msgId = 0;
+        this.pending = new Map();
+        this.progressCb = null;
+      }
+      _ensureWorker() {
+        if (this.worker) return;
+        const url = URL.createObjectURL(new Blob([FFMPEG_WORKER_SOURCE], { type: 'text/javascript' }));
+        this.worker = new Worker(url);
+        this.worker.onmessage = (e) => {
+          const { id, type, data } = e.data;
+          if (type === 'PROGRESS') { if (this.progressCb) this.progressCb(data); return; }
+          if (type === 'LOG') return;
+          const p = this.pending.get(id);
+          if (!p) return;
+          this.pending.delete(id);
+          if (type === 'ERROR') p.reject(new Error(data));
+          else p.resolve(data);
+        };
+        this.worker.onerror = (e) => {
+          const err = new Error('変換ワーカーでエラーが発生しました' + (e && e.message ? '：' + e.message : ''));
+          this.pending.forEach(p => p.reject(err));
+          this.pending.clear();
+        };
+      }
+      _call(type, data, transfer) {
+        this._ensureWorker();
+        return new Promise((resolve, reject) => {
+          const id = ++this.msgId;
+          this.pending.set(id, { resolve, reject });
+          this.worker.postMessage({ id, type, data }, transfer || []);
+        });
+      }
+      load(coreJsText, wasmBinary) { return this._call('LOAD', { coreJsText, wasmBinary }, [wasmBinary]); }
+      exec(args) { return this._call('EXEC', { args }); }
+      readFile(path) { return this._call('READ_FILE', { path }); }
+      writeFile(path, data) { return this._call('WRITE_FILE', { path, data }, [data.buffer]); }
+      deleteFile(path) { return this._call('DELETE_FILE', { path }); }
+      createDir(path) { return this._call('CREATE_DIR', { path }); }
+      deleteDir(path) { return this._call('DELETE_DIR', { path }); }
+      mount(fsType, options, mountPoint) { return this._call('MOUNT', { fsType, options, mountPoint }); }
+      unmount(mountPoint) { return this._call('UNMOUNT', { mountPoint }); }
+      terminate() {
+        if (this.worker) { try { this.worker.terminate(); } catch (e) {} }
+        this.worker = null;
+        const err = new Error('キャンセルしました');
+        this.pending.forEach(p => p.reject(err));
+        this.pending.clear();
+      }
+    }
+    let _ffmpeg = null;
+    let _ffmpegLoading = null;
+    let _convertCancelled = false;
+    let _abortCtrl = null;
+
+    // --- エンジンのIndexedDBキャッシュ（2回目以降はダウンロード不要） ---
+    const engineCacheDB = () => new Promise((resolve, reject) => {
+      const req = indexedDB.open('FFmpegEngineCache', 1);
+      req.onupgradeneeded = (e) => { e.target.result.createObjectStore('files'); };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const engineCacheGet = async (key) => {
+      try {
+        const db = await engineCacheDB();
+        return await new Promise((resolve) => {
+          const r = db.transaction('files').objectStore('files').get(key);
+          r.onsuccess = () => resolve(r.result || null);
+          r.onerror = () => resolve(null);
+        });
+      } catch (e) { return null; }
+    };
+    const engineCachePut = async (key, blob) => {
+      try {
+        const db = await engineCacheDB();
+        await new Promise((resolve) => {
+          const tx = db.transaction('files', 'readwrite');
+          tx.objectStore('files').put(blob, key);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => resolve();
+        });
+      } catch (e) {}
+    };
+
+    // 進捗(受信バイト数)を報告しながらダウンロード
+    const fetchWithProgress = async (url, onBytes, signal) => {
+      const resp = await fetch(url, { signal });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      if (!resp.body || !resp.body.getReader) {
+        const buf = await resp.arrayBuffer();
+        if (onBytes) onBytes(buf.byteLength);
+        return new Blob([buf]);
+      }
+      const reader = resp.body.getReader();
+      const chunks = [];
+      let loaded = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        loaded += value.length;
+        if (onBytes) onBytes(loaded);
+      }
+      return new Blob(chunks);
+    };
+
+    // 変換エンジンを準備（onStatus: {loadedMB, totalMB, ratio, initializing}）
+    const getFFmpeg = async (onStatus) => {
+      if (_ffmpeg) return _ffmpeg;
+      if (_ffmpegLoading) return _ffmpegLoading;
+      _ffmpegLoading = (async () => {
+        const totalBytes = ENGINE_FILES.reduce((s, f) => s + f.size, 0);
+        const loadedPerFile = {};
+        const report = (initializing) => {
+          if (!onStatus) return;
+          const loaded = Object.values(loadedPerFile).reduce((a, b) => a + b, 0);
+          onStatus({
+            loadedMB: loaded / 1048576,
+            totalMB: totalBytes / 1048576,
+            ratio: Math.min(1, loaded / totalBytes),
+            initializing: !!initializing,
+          });
+        };
+        report(false);
+        // 1) キャッシュ確認 → なければCDNからダウンロード
+        let blobs = null, lastErr = null;
+        for (const cdn of FFMPEG_CDNS) {
+          try {
+            const result = {};
+            for (const f of ENGINE_FILES) {
+              if (_convertCancelled) throw new Error('キャンセルしました');
+              let blob = await engineCacheGet(f.key);
+              if (!blob || blob.size === 0) {
+                blob = await fetchWithProgress(
+                  f.rel(cdn),
+                  (bytes) => { loadedPerFile[f.key] = Math.min(bytes, f.size); report(false); },
+                  _abortCtrl ? _abortCtrl.signal : undefined
+                );
+                engineCachePut(f.key, blob);
+              }
+              loadedPerFile[f.key] = f.size;
+              report(false);
+              result[f.key] = new Blob([blob], { type: f.type });
+            }
+            blobs = result;
+            break;
+          } catch (e) {
+            if (_convertCancelled || (e && e.name === 'AbortError')) throw new Error('キャンセルしました');
+            lastErr = e;
+          }
+        }
+        if (!blobs) {
+          throw new Error('変換エンジンのダウンロードに失敗しました。インターネット接続を確認してください。' + (lastErr ? '（詳細: ' + (lastErr.message || lastErr) + '）' : ''));
+        }
+        // 2) エンジン初期化（コアJSのテキストとwasmバイナリをワーカーに直接渡す）
+        report(true);
+        const coreJsText = await blobs.core_js.text();
+        const wasmBinary = await blobs.core_wasm.arrayBuffer();
+        const ffmpeg = new MiniFFmpeg();
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('変換エンジンの起動がタイムアウトしました（90秒）。ページを再読み込みして再度お試しください。')), 90000)
+        );
+        await Promise.race([ffmpeg.load(coreJsText, wasmBinary), timeoutPromise]);
+        _ffmpeg = ffmpeg;
+        _ffmpegLoading = null;
+        return ffmpeg;
+      })();
+      try {
+        return await _ffmpegLoading;
+      } catch (e) {
+        _ffmpegLoading = null;
+        throw e;
+      }
+    };
+
+    // MTS→MP4変換（映像は無劣化コピー、音声のみAC-3→AACに変換するため高速）
+    const convertMtsToMp4 = async (file, onProgress) => {
+      const ffmpeg = await getFFmpeg();
+      const MOUNT_DIR = '/mtsmount';
+      let mounted = false;
+      let memInName = null;
+      ffmpeg.progressCb = (p) => {
+        if (onProgress) onProgress(Math.max(0, Math.min(1, (p && p.progress) || 0)));
+      };
+      try {
+        let inPath;
+        try {
+          // WORKERFS: ファイルをメモリにコピーせず直接マウント（大容量対応）
+          try { await ffmpeg.createDir(MOUNT_DIR); } catch (e) {}
+          await ffmpeg.mount('WORKERFS', { files: [file] }, MOUNT_DIR);
+          mounted = true;
+          inPath = `${MOUNT_DIR}/${file.name}`;
+        } catch (e) {
+          // フォールバック: メモリへ書き込み（約1.5GBまで）
+          if (file.size > 1.5 * 1024 * 1024 * 1024) {
+            throw new Error('このファイルは大きすぎて処理できません（' + Math.round(file.size / 1024 / 1024 / 1024 * 10) / 10 + 'GB）');
+          }
+          memInName = 'input_' + Date.now() + '.mts';
+          await ffmpeg.writeFile(memInName, new Uint8Array(await file.arrayBuffer()));
+          inPath = memInName;
+        }
+        const ret = await ffmpeg.exec([
+          '-fflags', '+genpts',
+          '-i', inPath,
+          '-map', '0:v:0', '-map', '0:a:0?',
+          '-c:v', 'copy',
+          '-c:a', 'aac', '-b:a', '160k', '-ac', '2',
+          '-sn', '-dn',
+          'out.mp4'
+        ]);
+        if (ret !== 0) throw new Error('変換に失敗しました（コード ' + ret + '）');
+        const data = await ffmpeg.readFile('out.mp4');
+        if (!data || data.length === 0) throw new Error('変換結果が空でした');
+        return new Blob([data.buffer], { type: 'video/mp4' });
+      } finally {
+        ffmpeg.progressCb = null;
+        try { await ffmpeg.deleteFile('out.mp4'); } catch (e) {}
+        if (mounted) {
+          try { await ffmpeg.unmount(MOUNT_DIR); } catch (e) {}
+          try { await ffmpeg.deleteDir(MOUNT_DIR); } catch (e) {}
+        }
+        if (memInName) { try { await ffmpeg.deleteFile(memInName); } catch (e) {} }
+      }
+    };
+
+    // Blob URLから動画の長さ(ms)を取得
+    const probeDurationMs = (url) => new Promise((resolve, reject) => {
+      const v = document.createElement('video');
+      v.preload = 'metadata';
+      v.onloadedmetadata = () => {
+        const d = v.duration;
+        v.removeAttribute('src');
+        v.load();
+        resolve(isFinite(d) && d > 0 ? d * 1000 : 0);
+      };
+      v.onerror = () => reject(new Error('変換後の動画を読み込めませんでした'));
+      v.src = url;
+    });
+
+    const isMtsFile = (f) => /\.(mts|m2ts)$/i.test(f.name);
+
     function App() {
       const videoRef = useRef(null);
       const pieChartRef = useRef(null);
@@ -1475,14 +1781,69 @@
       const loadInputRef = useRef(null);
       const autoSaveTimeout = useRef(null);
       const commentInputRef = useRef(null);
+      // ===== 複数MTS連続再生用 =====
+      // segments: [{url, durationMs, offsetMs, name}] / null=通常の単一動画モード
+      const [segments, setSegments] = useState(null);
+      const [segIndex, setSegIndex] = useState(0);
+      const segmentsRef = useRef(null);
+      const segIndexRef = useRef(0);
+      const pendingSeekMs = useRef(null);   // セグメント切替後に適用するローカル秒位置(ms)
+      const resumePlayRef = useRef(false);  // セグメント切替後に再生を再開するか
+      // converting: {phase:'load'|'convert', current, total, fileName, progress} / null=非表示
+      const [converting, setConverting] = useState(null);
+
+      // 全セグメントのURLを解放してリセット
+      const clearSegments = () => {
+        if (segmentsRef.current) segmentsRef.current.forEach(s => URL.revokeObjectURL(s.url));
+        segmentsRef.current = null;
+        segIndexRef.current = 0;
+        setSegments(null);
+        setSegIndex(0);
+      };
+
+      // 全体タイムライン上の位置(ms)へシーク（セグメントをまたぐ場合は切替）
+      const seekGlobal = (ms) => {
+        const segs = segmentsRef.current;
+        const video = videoRef.current;
+        if (!segs) {
+          if (video) video.currentTime = Math.max(0, ms) / 1000;
+          return;
+        }
+        const last = segs[segs.length - 1];
+        const total = last.offsetMs + last.durationMs;
+        const t = Math.max(0, Math.min(ms, Math.max(0, total - 100)));
+        let idx = segs.findIndex(s => t < s.offsetMs + s.durationMs);
+        if (idx === -1) idx = segs.length - 1;
+        const localMs = t - segs[idx].offsetMs;
+        if (idx === segIndexRef.current) {
+          if (video) video.currentTime = localMs / 1000;
+        } else {
+          pendingSeekMs.current = localMs;
+          resumePlayRef.current = video ? !video.paused : false;
+          segIndexRef.current = idx;
+          setSegIndex(idx);
+          setVideoSrc(segs[idx].url);
+        }
+        setCurrentTime(t);
+      };
 
       const handleFileSelect = (e) => {
-        const file = e.target.files[0];
+        const files = Array.from(e.target.files || []);
+        // ファイルinputの値をリセット（同じファイルを再選択可能にする）
+        e.target.value = '';
+        if (files.length === 0) return;
+        // MTS/M2TSを含む、または複数ファイル選択 → 変換・連結パイプラインへ
+        if (files.some(isMtsFile) || files.length > 1) {
+          loadMtsFiles(files);
+          return;
+        }
+        const file = files[0];
         if (file) {
           setIsPlaying(false);
           setVideoError(null);
-          // 前のObjectURLを解放
-          if (videoSrc) URL.revokeObjectURL(videoSrc);
+          // 前のObjectURL/セグメントを解放
+          if (segmentsRef.current) clearSegments();
+          else if (videoSrc) URL.revokeObjectURL(videoSrc);
           if (needsVideoReselect) {
             // 再開時: 動画だけ再選択（記録データは維持）
             setVideoSrc(URL.createObjectURL(file));
@@ -1514,9 +1875,85 @@
             setCurrentTime(0);
             setAggregatedData(null);
           }
-          // ファイルinputの値をリセット（同じファイルを再選択可能にする）
-          e.target.value = '';
         }
+      };
+
+      // 複数MTS（または複数動画）を順に変換して連続再生用セグメントを構築
+      const loadMtsFiles = async (files) => {
+        // ファイル名順にソート（00000.MTS, 00001.MTS... の撮影順を想定）
+        const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+        const keepRecords = needsVideoReselect;
+        setIsPlaying(false);
+        setVideoError(null);
+        _convertCancelled = false;
+        _abortCtrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        try {
+          if (sorted.some(isMtsFile)) {
+            setConverting({ phase: 'load', current: 0, total: sorted.length, fileName: '', progress: 0, loadedMB: 0, totalMB: 0, initializing: false });
+            await getFFmpeg((st) => setConverting(c => (c && c.phase === 'load')
+              ? { ...c, progress: st.ratio, loadedMB: st.loadedMB, totalMB: st.totalMB, initializing: st.initializing }
+              : c));
+          }
+          const segs = [];
+          let offset = 0;
+          for (let i = 0; i < sorted.length; i++) {
+            if (_convertCancelled) throw new Error('キャンセルしました');
+            const f = sorted[i];
+            setConverting({ phase: 'convert', current: i + 1, total: sorted.length, fileName: f.name, progress: 0 });
+            const blob = isMtsFile(f)
+              ? await convertMtsToMp4(f, (p) => setConverting(c => c ? { ...c, progress: p } : c))
+              : f;
+            if (_convertCancelled) throw new Error('キャンセルしました');
+            const url = URL.createObjectURL(blob);
+            const durMs = await probeDurationMs(url);
+            segs.push({ url, durationMs: durMs, offsetMs: offset, name: f.name });
+            offset += durMs;
+          }
+          // 旧動画のクリーンアップ
+          if (segmentsRef.current) {
+            segmentsRef.current.forEach(s => URL.revokeObjectURL(s.url));
+          } else if (videoSrc) {
+            URL.revokeObjectURL(videoSrc);
+          }
+          segmentsRef.current = segs;
+          segIndexRef.current = 0;
+          setSegments(segs);
+          setSegIndex(0);
+          pendingSeekMs.current = 0;
+          resumePlayRef.current = false;
+          setVideoBlob(null);
+          setVideoMode('direct'); // 変換後の動画はIndexedDBに保存しない（軽量モード扱い）
+          setVideoName(sorted.length === 1 ? sorted[0].name : `${sorted[0].name} ほか${sorted.length - 1}本`);
+          setDuration(offset);
+          setCurrentTime(0);
+          if (keepRecords) {
+            setNeedsVideoReselect(false);
+          } else {
+            setRecords([]);
+            setInteractions([]);
+            setActiveCategory(null);
+            setAggregatedData(null);
+            setNeedsVideoReselect(false);
+          }
+          setVideoSrc(segs[0].url);
+        } catch (err) {
+          console.error('MTS変換エラー:', err);
+          if (!_convertCancelled) {
+            setVideoError('MTS変換に失敗しました：' + (err && err.message ? err.message : String(err)));
+          }
+        } finally {
+          setConverting(null);
+          _abortCtrl = null;
+        }
+      };
+
+      // 変換のキャンセル
+      const cancelConversion = () => {
+        _convertCancelled = true;
+        if (_abortCtrl) { try { _abortCtrl.abort(); } catch (e) {} }
+        if (_ffmpeg) { try { _ffmpeg.terminate(); } catch (e) {} _ffmpeg = null; }
+        _ffmpegLoading = null;
+        setConverting(null);
       };
 
       // 自動保存
@@ -1580,7 +2017,8 @@
       const startNewSession = async () => {
         if (confirm('保存されているセッションを削除して、新しく始めますか？')) {
           await clearIndexedDB();
-          if (videoSrc) URL.revokeObjectURL(videoSrc);
+          if (segmentsRef.current) clearSegments();
+          else if (videoSrc) URL.revokeObjectURL(videoSrc);
           setVideoSrc(null);
           setVideoBlob(null);
           setVideoName('');
@@ -1630,7 +2068,11 @@
       };
 
       const skip = (seconds) => {
-        if (videoRef.current) {
+        if (!videoRef.current) return;
+        if (segmentsRef.current) {
+          // 連続再生モード: 全体タイムラインでシーク（セグメントまたぎ対応）
+          seekGlobal(currentTime + seconds * 1000);
+        } else {
           videoRef.current.currentTime = Math.max(0, Math.min(videoRef.current.currentTime + seconds, duration / 1000));
         }
       };
@@ -2194,14 +2636,50 @@
       useEffect(() => {
         const video = videoRef.current;
         if (!video) return;
-        const onTimeUpdate = () => setCurrentTime(video.currentTime * 1000);
+        const onTimeUpdate = () => {
+          const segs = segmentsRef.current;
+          if (segs && segs[segIndexRef.current]) {
+            setCurrentTime(segs[segIndexRef.current].offsetMs + video.currentTime * 1000);
+          } else {
+            setCurrentTime(video.currentTime * 1000);
+          }
+        };
         const onLoadedMetadata = () => {
-          setDuration(video.duration * 1000);
+          const segs = segmentsRef.current;
+          if (segs) {
+            // 連続再生モード: durationは全セグメント合計を維持
+            const total = segs.reduce((s, x) => s + x.durationMs, 0);
+            setDuration(total);
+            if (pendingSeekMs.current !== null) {
+              video.currentTime = pendingSeekMs.current / 1000;
+              pendingSeekMs.current = null;
+            }
+            if (resumePlayRef.current) {
+              resumePlayRef.current = false;
+              video.play().catch(e => console.log('Play error:', e));
+              setIsPlaying(true);
+            }
+          } else {
+            setDuration(video.duration * 1000);
+          }
           video.volume = volume;
           video.muted = isMuted;
           setVideoError(null);
         };
-        const onEnded = () => setIsPlaying(false);
+        const onEnded = () => {
+          const segs = segmentsRef.current;
+          if (segs && segIndexRef.current < segs.length - 1) {
+            // 次のセグメントへ自動的に続けて再生
+            const next = segIndexRef.current + 1;
+            pendingSeekMs.current = 0;
+            resumePlayRef.current = true;
+            segIndexRef.current = next;
+            setSegIndex(next);
+            setVideoSrc(segs[next].url);
+          } else {
+            setIsPlaying(false);
+          }
+        };
         const onError = () => {
           const code = video.error?.code;
           // MEDIA_ERR_SRC_NOT_SUPPORTED = 4 が典型的なコーデック非対応
@@ -2387,13 +2865,61 @@
             <div className="left-section">
               {/* 上部: 動画 + 期間記録 */}
               <div className="top-area">
-                <input type="file" accept="video/*" onChange={handleFileSelect} className="file-input" id="video-input" ref={fileInputRef} />
-                {videoSrc ? (
+                <input type="file" accept="video/*,.mts,.m2ts,.MTS,.M2TS" multiple onChange={handleFileSelect} className="file-input" id="video-input" ref={fileInputRef} />
+                {converting ? (
+                  <div className="placeholder">
+                    <div className="placeholder-icon">⚙️</div>
+                    {converting.phase === 'load' ? (
+                      <>
+                        <p style={{fontSize:'0.9rem', fontWeight:700}}>
+                          {converting.initializing ? '変換エンジンを起動中…' : '変換エンジンをダウンロード中…'}
+                        </p>
+                        {converting.initializing ? (
+                          <p style={{fontSize:'0.75rem', opacity:0.75}}>あと数秒お待ちください</p>
+                        ) : (
+                          <>
+                            <div style={{width:'80%', maxWidth:'400px', height:'10px', background:'rgba(255,255,255,0.15)', borderRadius:'5px', overflow:'hidden'}}>
+                              <div style={{width:`${Math.round((converting.progress || 0) * 100)}%`, height:'100%', background:'linear-gradient(90deg,#2196f3,#4fc3f7)', borderRadius:'5px', transition:'width 0.3s'}}></div>
+                            </div>
+                            <p style={{fontSize:'0.75rem', opacity:0.8}}>
+                              {(converting.loadedMB || 0).toFixed(1)} / {(converting.totalMB || 0).toFixed(1)} MB（{Math.round((converting.progress || 0) * 100)}%）
+                            </p>
+                          </>
+                        )}
+                        <p style={{fontSize:'0.68rem', opacity:0.55, textAlign:'center', lineHeight:1.6}}>
+                          ダウンロードは初回のみです。<br/>2回目以降はこの端末に保存されたエンジンを使うため、すぐに変換が始まります。
+                        </p>
+                        <button onClick={cancelConversion}
+                          style={{marginTop:'8px', background:'transparent', border:'1px solid rgba(255,255,255,0.35)', color:'rgba(255,255,255,0.8)', padding:'6px 18px', borderRadius:'6px', cursor:'pointer', fontSize:'0.75rem'}}>
+                          キャンセル
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p style={{fontSize:'0.9rem', fontWeight:700}}>
+                          MTSファイルを変換中（{converting.current} / {converting.total}）
+                        </p>
+                        <p style={{fontSize:'0.75rem', opacity:0.75, maxWidth:'400px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{converting.fileName}</p>
+                        <div style={{width:'80%', maxWidth:'400px', height:'10px', background:'rgba(255,255,255,0.15)', borderRadius:'5px', overflow:'hidden'}}>
+                          <div style={{width:`${Math.round((converting.progress || 0) * 100)}%`, height:'100%', background:'linear-gradient(90deg,#4caf50,#81c784)', borderRadius:'5px', transition:'width 0.3s'}}></div>
+                        </div>
+                        <p style={{fontSize:'0.72rem', opacity:0.7}}>{Math.round((converting.progress || 0) * 100)}%</p>
+                        <p style={{fontSize:'0.68rem', opacity:0.55, textAlign:'center', lineHeight:1.5}}>
+                          映像は無劣化のまま音声のみ変換しています。<br/>このタブを閉じずにお待ちください。
+                        </p>
+                        <button onClick={cancelConversion}
+                          style={{marginTop:'8px', background:'transparent', border:'1px solid rgba(255,255,255,0.35)', color:'rgba(255,255,255,0.8)', padding:'6px 18px', borderRadius:'6px', cursor:'pointer', fontSize:'0.75rem'}}>
+                          キャンセル
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : videoSrc ? (
                   <div className="video-container">
                     <div className="video-wrapper" onClick={togglePlay} style={{cursor:'pointer'}}>
                       <video ref={videoRef} src={videoSrc} playsInline style={{zIndex: 1}} />
                       <button className="change-video-btn" onClick={(e) => { e.stopPropagation(); handleChangeVideo(); }}>🎬 動画を変更</button>
-                      <div className="timecode">{formatTime(currentTime)} / {formatTime(duration)}</div>
+                      <div className="timecode">{formatTime(currentTime)} / {formatTime(duration)}{segments && segments.length > 1 ? `（パート ${segIndex + 1}/${segments.length}）` : ''}</div>
                       {videoError && (
                         <div onClick={(e) => e.stopPropagation()} style={{
                           position:'absolute', top:0, left:0, right:0, bottom:0,
@@ -2423,7 +2949,7 @@
                     </div>
                     <div className="video-controls">
                       <input type="range" className="seek-bar" min="0" max={duration} value={currentTime}
-                        onChange={(e) => { const t = parseFloat(e.target.value); setCurrentTime(t); if (videoRef.current) videoRef.current.currentTime = t / 1000; }} />
+                        onChange={(e) => { const t = parseFloat(e.target.value); if (segments) { seekGlobal(t); } else { setCurrentTime(t); if (videoRef.current) videoRef.current.currentTime = t / 1000; } }} />
                       <div className="control-buttons">
                         <button className="control-btn" onClick={() => skip(-10)}>-10</button>
                         <button className="control-btn" onClick={() => skip(-5)}>-5</button>
@@ -2440,6 +2966,11 @@
                   </div>
                 ) : (
                   <div className="placeholder">
+                    {videoError && (
+                      <div style={{maxWidth:'460px', background:'rgba(211,47,47,0.18)', border:'1px solid rgba(239,154,154,0.5)', borderRadius:'8px', padding:'10px 14px', fontSize:'0.75rem', lineHeight:1.6, color:'#ffcdd2', marginBottom:'6px', textAlign:'center'}}>
+                        ⚠️ {videoError}
+                      </div>
+                    )}
                     {needsVideoReselect ? (
                       <>
                         <div className="placeholder-icon">🔄</div>
@@ -2477,12 +3008,13 @@
                           <div style={{fontWeight:700, marginBottom:'4px', color:'#fbc02d'}}>📋 対応ファイル形式</div>
                           <div style={{display:'grid', gridTemplateColumns:'auto 1fr', gap:'2px 10px', fontSize:'0.7rem'}}>
                             <span style={{color:'#81c784'}}>◎ 推奨</span><span><b>MP4 (H.264)</b> ・ WebM (VP8/VP9)</span>
+                            <span style={{color:'#4fc3f7'}}>◎ 自動変換</span><span><b>MTS / M2TS（ビデオカメラのAVCHD）</b></span>
                             <span style={{color:'#ffb74d'}}>△ 環境依存</span><span>MOV (H.264) ・ MP4 (HEVC/H.265)</span>
                             <span style={{color:'#ef9a9a'}}>✕ 不可</span><span>AVI ・ MKV ・ WMV ・ FLV</span>
                           </div>
                           <div style={{marginTop:'6px', fontSize:'0.66rem', opacity:0.8, borderTop:'1px solid rgba(255,255,255,0.12)', paddingTop:'6px'}}>
-                            ⚠️ 動画の規格（コーデック）がブラウザでサポートされている必要があります。<br/>
-                            HEVC（H.265）の動画は再生できない場合があるため、撮影時に互換性の高い形式（H.264）を選ぶか、動画変換ソフトで MP4 (H.264) に変換してから読み込んでください。
+                            🎥 <b>ビデオカメラの細切れMTSファイルに対応：</b>10分ごとに分割されたMTSファイルを<b>まとめて複数選択</b>すると、アプリ内で自動変換・連結して1本の動画として分析できます（撮影順＝ファイル名順に連結、要インターネット接続）。<br/>
+                            ⚠️ HEVC（H.265）の動画は再生できない場合があるため、撮影時は互換性の高いH.264形式を推奨します。
                           </div>
                         </div>
                       </>
@@ -2500,6 +3032,7 @@
                         </button>
                         <p style={{fontSize:'0.65rem', opacity:0.55, marginTop:'10px', lineHeight:1.5, maxWidth:'380px', textAlign:'center'}}>
                           推奨フォーマット: <b style={{color:'#fbc02d'}}>MP4 (H.264)</b><br/>
+                          🎥 MTS（AVCHD）は複数選択で自動変換・連結されます<br/>
                           ⚠️ HEVC（H.265）コーデックの動画は再生できない場合があります
                         </p>
                       </>
