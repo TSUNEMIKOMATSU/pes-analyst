@@ -2375,6 +2375,11 @@
         const subBins = {};
         const targetBins = { all: 0, group: 0, individual: 0 };
         const binSeries = []; // 研究用：3秒ビンごとの生データ系列
+        // === 原典(高橋ら1991 図1 / 岡沢ら1995 表2)に忠実：場面(第1次元)と行動(第2次元)を独立集計 ===
+        const behaviorMainBins = { interaction: 0, direct_instruction: 0, aux_activity: 0, patrol: 0, maintenance: 0, non_functional: 0, untracked: 0 };
+        const behaviorSubBins = {}; // 行動の下位（場面に関わらず）
+        const sceneCatBins = {};    // 場面（第1次元）ビン数
+        const crossBins = {};       // `${場面区分}|${行動}` のクロス集計
         for (let b = 0; b < nBins; b++) {
           const mid = b * BIN_MS + BIN_MS / 2;
           const scene = sceneAt(mid);
@@ -2382,6 +2387,14 @@
           const ev = stateAt(mid);
           if (ev && ev.targetScope) targetBins[ev.targetScope] = (targetBins[ev.targetScope] || 0) + 1;
           const rec = { bin: b, start: b * BIN_MS, scene: scene, target: ev ? ev.targetScope : null };
+          // --- 原典忠実：行動(第2次元)を場面と独立に集計（全ビン共通） ---
+          const bMain = ev ? (INTERACTION_TYPES_SET.includes(ev.type) ? 'interaction' : ev.type) : 'untracked';
+          rec.bMain = bMain;
+          behaviorMainBins[bMain] = (behaviorMainBins[bMain] || 0) + 1;
+          if (ev) { const _bk = subKeyOf(ev); behaviorSubBins[_bk] = (behaviorSubBins[_bk] || 0) + 1; }
+          const _sclass = scene === 'management' ? 'mgmt' : (scene ? 'pe' : 'none');
+          sceneCatBins[scene || 'none'] = (sceneCatBins[scene || 'none'] || 0) + 1;
+          crossBins[_sclass + '|' + bMain] = (crossBins[_sclass + '|' + bMain] || 0) + 1;
           if (isMgmtScene) {
             mainBins.management++;
             if (ev) { const k = 'M:' + subKeyOf(ev); subBins[k] = (subBins[k] || 0) + 1; }
@@ -2421,6 +2434,10 @@
           subDurations,
           targetBins,
           binSeries,
+          behaviorMainBins,
+          behaviorSubBins,
+          sceneCatBins,
+          crossBins,
           untrackedTime: mainBins.untracked * BIN_MS
         };
       };
@@ -2504,51 +2521,80 @@
         });
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(periodData), '期間記録');
 
-        // 教師行動構造（上位・下位カテゴリーの割合 / 3秒ビン集計・高橋ら1991方式）
+        // ===== 教師行動の構造（高橋ら1991 図1 / 岡沢ら1995 表2 に忠実な3次元集計）=====
+        // 高橋ら自身が「場面と行動を混在させると重複が生じる」と指摘しているため、
+        // 第1次元（授業場面）と第2次元（教師行動）を別シートに分け、両者のクロス表を添える。
         const binX = computeBinStats(currentTime > 0 ? currentTime : duration);
         const bmX = BENCHMARKS[benchmarkKey];
-        const structSheet = [];
-        MAIN_ROW_ORDER.forEach(([k, label]) => {
-          const ms = binX.mainDurations[k] || 0;
-          const pct = binX.denomTime > 0 ? ms / binX.denomTime * 100 : 0;
-          const ref = bmX.values[k];
-          structSheet.push({
-            '上位カテゴリ': label.replace(/^[^ ]+ /, ''), '下位カテゴリ': '',
-            '時間(秒)': Math.round(ms / 1000), '割合(%)': Math.round(pct * 10) / 10,
-            '基準(%)': ref == null ? '-' : ref,
-            '差(pt)': ref == null ? '-' : Math.round((pct - ref) * 10) / 10
-          });
-          let subKeys = [];
-          if (k === 'management') {
-            subKeys = Object.keys(binX.subDurations).filter(x => x.startsWith('M:')).sort()
-              .map(x => [x, labelOfSubKey(x.slice(2))]);
-          } else if (k === 'direct_instruction') {
-            subKeys = Object.keys(binX.subDurations).filter(x => !x.startsWith('M:') && x.startsWith('direct_instruction:')).sort()
-              .map(x => [x, labelOfSubKey(x)]);
-          } else if (k === 'interaction') {
-            subKeys = Object.keys(binX.subDurations).filter(x => !x.startsWith('M:') && /^(question|reception|encouragement|feedback|aux_interaction)/.test(x)).sort()
-              .map(x => [x, labelOfSubKey(x)]);
-          } else if (k === 'aux_activity') {
-            subKeys = Object.keys(binX.subDurations).filter(x => !x.startsWith('M:') && x.startsWith('aux_activity:')).sort()
-              .map(x => [x, labelOfSubKey(x)]);
-          }
-          subKeys.forEach(([x, subLabel]) => {
-            const sms = binX.subDurations[x];
-            structSheet.push({
-              '上位カテゴリ': '', '下位カテゴリ': subLabel,
-              '時間(秒)': Math.round(sms / 1000),
-              '割合(%)': binX.denomTime > 0 ? Math.round(sms / binX.denomTime * 1000) / 10 : 0,
-              '基準(%)': '', '差(pt)': ''
+        const denom = binX.denomTime;
+        const secOf = (bins) => Math.round(bins * BIN_MS / 1000);
+        const pctOf = (bins) => denom > 0 ? Math.round(bins * BIN_MS / denom * 1000) / 10 : 0;
+        const sceneLabel = (id) => (CATEGORIES.find(c => c.id === id) || {}).label || id;
+        const subMainOf = (key) => {
+          const t = key.split(':')[0];
+          return ['question', 'reception', 'feedback', 'encouragement', 'aux_interaction'].includes(t) ? 'interaction' : t;
+        };
+
+        // --- 第1次元：授業場面（体育的場面／マネジメント場面）---
+        const peScenes = ['instruction', 'cognitive', 'motor'];
+        const mgmtScBins = binX.sceneCatBins['management'] || 0;
+        const peScBins = peScenes.reduce((s, k) => s + (binX.sceneCatBins[k] || 0), 0);
+        const noneScBins = binX.sceneCatBins['none'] || 0;
+        const mgRef = bmX.values.management;
+        const sceneSheet = [];
+        sceneSheet.push({ '場面(第1次元)': '体育的場面', '時間(秒)': secOf(peScBins), '割合(%)': pctOf(peScBins), '基準(%)': '', '差(pt)': '' });
+        peScenes.forEach(k => { const bn = binX.sceneCatBins[k] || 0; if (bn > 0) sceneSheet.push({ '場面(第1次元)': '　└ ' + sceneLabel(k), '時間(秒)': secOf(bn), '割合(%)': pctOf(bn), '基準(%)': '', '差(pt)': '' }); });
+        sceneSheet.push({ '場面(第1次元)': 'マネジメント場面', '時間(秒)': secOf(mgmtScBins), '割合(%)': pctOf(mgmtScBins), '基準(%)': mgRef == null ? '-' : mgRef, '差(pt)': mgRef == null ? '-' : Math.round((pctOf(mgmtScBins) - mgRef) * 10) / 10 });
+        if (noneScBins > 0) sceneSheet.push({ '場面(第1次元)': '（未記録）', '時間(秒)': secOf(noneScBins), '割合(%)': pctOf(noneScBins), '基準(%)': '-', '差(pt)': '-' });
+        sceneSheet.push({ '場面(第1次元)': `※基準: ${bmX.label}（マネジメント場面のみ比較可）`, '時間(秒)': '', '割合(%)': '', '基準(%)': '', '差(pt)': '' });
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sceneSheet), '授業場面(第1次元)');
+
+        // --- 第2次元：教師行動（場面に関わらず各行動を1回ずつ・重複なし）---
+        const behOrder = [
+          ['interaction', '相互作用', true],
+          ['direct_instruction', '直接的指導', true],
+          ['aux_activity', '補助的活動', true],
+          ['patrol', '巡視', false],
+          ['maintenance', '維持・管理', false],
+          ['non_functional', '非機能', false]
+        ];
+        const behSheet = [];
+        behOrder.forEach(([k, label, hasSub]) => {
+          const bn = binX.behaviorMainBins[k] || 0;
+          behSheet.push({ '教師行動(第2次元)': label, '下位カテゴリ': '', '時間(秒)': secOf(bn), '割合(%)': pctOf(bn) });
+          if (hasSub) {
+            Object.keys(binX.behaviorSubBins).filter(x => subMainOf(x) === k).sort().forEach(x => {
+              const sb = binX.behaviorSubBins[x];
+              behSheet.push({ '教師行動(第2次元)': '', '下位カテゴリ': labelOfSubKey(x), '時間(秒)': secOf(sb), '割合(%)': pctOf(sb) });
             });
-          });
+          }
         });
-        structSheet.push({ '上位カテゴリ': '（未記録）', '下位カテゴリ': '',
-          '時間(秒)': Math.round(binX.untrackedTime / 1000),
-          '割合(%)': binX.denomTime > 0 ? Math.round(binX.untrackedTime / binX.denomTime * 1000) / 10 : 0,
-          '基準(%)': '-', '差(pt)': '-' });
-        structSheet.push({ '上位カテゴリ': `※比較基準: ${bmX.label}`, '下位カテゴリ': '',
-          '時間(秒)': '', '割合(%)': '', '基準(%)': '', '差(pt)': '' });
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(structSheet), '教師行動構造');
+        const utBeh = binX.behaviorMainBins['untracked'] || 0;
+        if (utBeh > 0) behSheet.push({ '教師行動(第2次元)': '（未記録）', '下位カテゴリ': '', '時間(秒)': secOf(utBeh), '割合(%)': pctOf(utBeh) });
+        behSheet.push({ '教師行動(第2次元)': '※場面に関わらず各行動を1回ずつ集計（高橋ら1991 図1 第2次元）。合計≒100%', '下位カテゴリ': '', '時間(秒)': '', '割合(%)': '' });
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(behSheet), '教師行動(第2次元)');
+
+        // --- 場面×行動 クロス集計（各セル＝全体に占める割合%）---
+        // 体育的場面の行が論文・表3の各行動値に、マネジメント場面の計が同表のマネジメント値に対応する。
+        const behKeys = behOrder.map(b => b[0]);
+        const behLabels = behOrder.map(b => b[1]);
+        const crossSheet = [];
+        [['pe', '体育的場面'], ['mgmt', 'マネジメント場面'], ['none', '（場面未記録）']].forEach(([sc, scLabel]) => {
+          let rowBins = 0;
+          const row = { '場面＼行動': scLabel };
+          behKeys.forEach((bk, i) => { const c = binX.crossBins[sc + '|' + bk] || 0; rowBins += c; row[behLabels[i]] = pctOf(c); });
+          const utc = binX.crossBins[sc + '|untracked'] || 0; rowBins += utc;
+          row['未記録'] = pctOf(utc);
+          row['計(%)'] = pctOf(rowBins);
+          if (rowBins > 0) crossSheet.push(row);
+        });
+        const totRow = { '場面＼行動': '計(%)' };
+        behKeys.forEach((bk, i) => { totRow[behLabels[i]] = pctOf(binX.behaviorMainBins[bk] || 0); });
+        totRow['未記録'] = pctOf(binX.behaviorMainBins['untracked'] || 0);
+        totRow['計(%)'] = 100;
+        crossSheet.push(totRow);
+        crossSheet.push({ '場面＼行動': '※各セル＝授業全体に占める割合(%)。体育的場面の行＝論文表3の各行動値に対応', '相互作用': '' });
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(crossSheet), '場面×行動');
 
 
         // 対象次元
@@ -2574,15 +2620,16 @@
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(infoSheet), '授業情報');
 
         // ビン系列（3秒ごとの生データ：SPSS/R での再分析・観察者間一致率の算出用）
-        const MAIN_JP = { management: 'マネジメント', direct_instruction: '直接的指導', patrol: '巡視',
-          interaction: '相互作用', aux_activity: '補助的活動', non_functional: '非機能', untracked: '未記録' };
+        const MAIN_JP = { interaction: '相互作用', direct_instruction: '直接的指導', aux_activity: '補助的活動',
+          patrol: '巡視', maintenance: '維持・管理', non_functional: '非機能', untracked: '未記録' };
         const SCENE_JP = { instruction: '学習指導', management: 'マネジメント', cognitive: '認知学習', motor: '運動学習' };
+        // 場面(第1次元)と行動(第2次元)を別列に。上位カテゴリは場面と独立な行動を表示（高橋ら1991 図1）。
         const binSheet = (binX.binSeries || []).map(rec => ({
           'ビン': rec.bin + 1,
           '開始': formatTime(rec.start),
           '終了': formatTime(rec.start + 3000),
-          '場面': rec.scene ? (SCENE_JP[rec.scene] || rec.scene) : '-',
-          '上位カテゴリ': MAIN_JP[rec.main] || rec.main,
+          '場面(第1次元)': rec.scene ? (SCENE_JP[rec.scene] || rec.scene) : '-',
+          '行動(第2次元)': MAIN_JP[rec.bMain] || rec.bMain || '未記録',
           '下位カテゴリ': rec.sub ? labelOfSubKey(rec.sub) : '-',
           '対象': rec.target === 'all' ? '全体' : rec.target === 'group' ? '小集団' : rec.target === 'individual' ? '個人' : '-'
         }));
